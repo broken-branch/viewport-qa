@@ -80,7 +80,7 @@ describe("secure loopback launch session", () => {
     page.on("console", (message) => { if (message.type() === "error") errors.push(message.text()); });
     try {
       await page.goto(url);
-      await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+      await expect.poll(() => page.locator("[data-capture]").count()).toBe(4);
       expect(page.url()).toBe(`${new URL(url).origin}/`);
       expect(await page.evaluate(() => history.state)).toBeNull();
       await expect.poll(() => page.locator(".capture img").first().getAttribute("src")).toMatch(/^blob:/u);
@@ -153,7 +153,7 @@ describe("secure loopback launch session", () => {
     const page = await browser.newPage();
     try {
       await page.goto(url);
-      await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+      await expect.poll(() => page.locator("[data-capture]").count()).toBe(4);
       expect(await page.evaluate(async (target) => {
         try { await window.vqaAuthorizedFetch(target); return "leaked"; } catch { return "blocked"; }
       }, hostileOrigin)).toBe("blocked");
@@ -172,7 +172,7 @@ describe("secure loopback launch session", () => {
     const page = await browser.newPage();
     try {
       await page.goto(url);
-      await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+      await expect.poll(() => page.locator("[data-capture]").count()).toBe(4);
       expect(page.url()).not.toContain(capability);
       expect(logs.join("\n")).not.toContain(capability);
       for (const name of readdirSync(root)) {
@@ -319,7 +319,7 @@ describe("secure loopback launch session", () => {
     const page = await browser.newPage();
     try {
       await page.goto(url);
-      await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+      await expect.poll(() => page.locator("[data-capture]").count()).toBe(4);
       await page.getByRole("button", { name: "Open settings" }).click();
       await page.getByRole("button", { name: "Stop Viewport QA" }).click();
       await expect.poll(() => server.listening).toBe(false);

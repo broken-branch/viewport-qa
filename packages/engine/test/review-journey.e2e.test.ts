@@ -73,6 +73,21 @@ async function seedExport(page: Page, issueId = "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED
   expect(response.status()).toBe(200);
 }
 
+/** Screen size is a single choice that opens on the narrowest size; this shows every size at once. */
+async function showAllSizes(page: Page): Promise<void> {
+  const sidebar = page.locator('.filters input[data-facet="resolution"][value=""]');
+  await sidebar.waitFor({ state: "attached" });
+  if (await sidebar.isVisible()) {
+    await sidebar.check();
+  } else {
+    await page.getByRole("button", { name: "Filter Screenshots" }).click();
+    await page.locator('#drawer input[data-facet="resolution"][value=""]').check();
+    await page.getByRole("button", { name: "Show Screenshots" }).click();
+    await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
+  }
+  await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+}
+
 /** Opens one issue's panel from its row and expands the highlight editor. */
 async function openIssuePanel(page: Page, coordinateId: string, title: string, touch = false): Promise<void> {
   const opener = page.locator(`[data-capture="${coordinateId}"] .issue-row`, { hasText: title }).locator(".issue-open");
@@ -92,7 +107,12 @@ describe("manifest-backed screenshot review journey", () => {
   it("composes presentation filters, hides internal vocabulary, and keeps screenshots color-accurate at 100 percent", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(baseUrl);
-    await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+    // One size at a time, narrowest first; the summary counts pages, not size variants.
+    await expect.poll(() => page.locator("[data-capture]").count()).toBe(4);
+    expect(await page.locator('[data-capture$="--1280x800"]').count()).toBe(0);
+    expect(await page.locator('.filters input[data-facet="resolution"]:checked').inputValue()).toBe("390 × 844");
+    expect(await page.locator("#filterSummary").textContent()).toBe("Showing all 4 pages");
+    expect(await page.locator("#resultsSummary").textContent()).toContain("4 pages match your filters.");
     expect(await page.locator("#zoomLabel").textContent()).toBe("100%");
     expect(await page.locator("header.topbar").textContent()).not.toContain("raw hits");
     expect(await page.locator("header.topbar").textContent()).not.toContain("adapter");
@@ -104,10 +124,20 @@ describe("manifest-backed screenshot review journey", () => {
     expect(await page.locator("body").evaluate((body) => getComputedStyle(body).colorScheme)).toBe("dark");
 
     await page.locator('.filters input[data-facet="page"][value="page-checkout"]').uncheck();
-    await page.locator('.filters input[data-facet="resolution"][value="1280 × 800"]').uncheck();
     await expect.poll(() => page.locator("[data-capture]").count()).toBe(2);
+    expect(await page.locator("#filterSummary").textContent()).toBe("Showing 2 of 4 pages");
+    // Switching size swaps the view of the same pages; issue counts in the sidebar do not move.
+    const toReview = await page.locator('.filters input[data-facet="status"][value="unreviewed"] + span + .count').textContent();
+    await page.locator('.filters input[data-facet="resolution"][value="1280 × 800"]').check();
+    await expect.poll(() => page.locator('[data-capture$="--1280x800"]').count()).toBe(2);
+    expect(await page.locator('[data-capture$="--390x844"]').count()).toBe(0);
+    expect(await page.locator("#filterSummary").textContent()).toBe("Showing 2 of 4 pages");
+    expect(await page.locator('.filters input[data-facet="status"][value="unreviewed"] + span + .count').textContent()).toBe(toReview);
 
     await page.locator("#clearFilters").click();
+    await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+    expect(await page.locator('.filters input[data-facet="resolution"]:checked').inputValue()).toBe("");
+    expect(await page.locator("#filterSummary").textContent()).toBe("Showing all 4 pages");
     const desktopStage = page.locator(
       '[data-capture="page-home--state-default--1280x800"] .image-stage img',
     );
@@ -125,7 +155,7 @@ describe("manifest-backed screenshot review journey", () => {
   it("keeps a decision retryable after a storage failure, persists it, and exports the selected issues", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await page.goto(baseUrl);
-    await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+    await expect.poll(() => page.locator("[data-capture]").count()).toBe(4);
 
     // A quick action on a row decides without opening anything.
     const homeCard = page.locator('[data-capture="page-home--state-alternate--390x844"]');
@@ -192,16 +222,18 @@ describe("manifest-backed screenshot review journey", () => {
 
     // Status filters apply to issues; screenshots without a matching issue drop out.
     await page.getByRole("button", { name: "Filter Screenshots" }).click();
+    // Each size is annotated with the issues in view that appear at it.
     const screenCounts = page.locator("#drawer fieldset").filter({ hasText: "Screen size" }).locator(".count");
-    const beforeCounts = await screenCounts.allTextContents();
+    expect(await screenCounts.allTextContents()).toEqual(["2", "2"]);
     await page
       .locator('#drawer input[data-facet="status"][value="unreviewed"]')
       .uncheck();
-    expect(await screenCounts.allTextContents()).not.toEqual(beforeCounts);
     await page.locator('#drawer input[data-facet="status"][value="dismissed"]').uncheck();
+    expect(await screenCounts.allTextContents()).toEqual(["1", "1"]);
     await page.getByRole("button", { name: "Show Screenshots" }).click();
     await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
-    await expect.poll(() => page.locator("[data-capture]").count()).toBe(2);
+    await expect.poll(() => page.locator("[data-capture]").count()).toBe(1);
+    expect(await page.locator("#filterSummary").textContent()).toBe("Showing 1 of 4 pages");
 
     const destination = join(reportDir, "browser-handoff.json");
     await page.getByRole("button", { name: "Open settings" }).click();
@@ -349,7 +381,7 @@ describe("manifest-backed screenshot review journey", () => {
       data: { issueId: "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED", status: "export" },
     });
     await page.goto(baseUrl);
-    await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+    await expect.poll(() => page.locator("[data-capture]").count()).toBe(4);
     const card = page.locator('[data-capture="page-checkout--state-alternate--390x844"]');
     const row = card.locator(".issue-row", { hasText: "Checkout total is clipped" });
     await expect.poll(() => row.locator(".pill").textContent()).toBe("In export");
@@ -571,7 +603,7 @@ describe("manifest-backed screenshot review journey", () => {
     await page.goto(baseUrl);
     const card = page.locator('[data-capture="page-checkout--state-alternate--390x844"]');
     const opener = card.locator(".image-open");
-    await expect.poll(() => page.locator(".capture > .canvas .image-open").count()).toBe(8);
+    await expect.poll(() => page.locator(".capture > .canvas .image-open").count()).toBe(4);
     expect(await card.getByRole("button", { name: "Open Image", exact: true }).isVisible()).toBe(true);
     expect(await opener.getAttribute("aria-label")).toBe("Open Checkout / Mobile 390×844 screenshot");
     await opener.focus();
@@ -640,7 +672,7 @@ describe("manifest-backed screenshot review journey", () => {
     });
     const page = await context.newPage();
     await page.goto(baseUrl);
-    await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+    await expect.poll(() => page.locator("[data-capture]").count()).toBe(4);
     const issueCard = page.locator(
       '[data-capture="page-checkout--state-alternate--390x844"]',
     );
@@ -1280,7 +1312,7 @@ describe("manifest-backed screenshot review journey", () => {
   it("dismisses every dimming surface from its backdrop without saving inside work", async () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     await page.goto(baseUrl);
-    await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
+    await expect.poll(() => page.locator("[data-capture]").count()).toBe(4);
     const card = page.locator('[data-capture="page-checkout--state-alternate--390x844"]');
     const reviewTrigger = card.locator(".issue-row", { hasText: "Checkout total is clipped" }).locator(".issue-open");
     const issueId = "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED";
@@ -1370,6 +1402,7 @@ describe("manifest-backed screenshot review journey", () => {
   it("distinguishes Fit to view from Actual size with accurate per-image geometry", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1300 } });
     await page.goto(baseUrl);
+    await showAllSizes(page);
     const narrow = page.locator('[data-capture="page-home--state-default--390x844"]');
     const wide = page.locator('[data-capture="page-home--state-default--1280x800"]');
     const narrowStage = narrow.locator(".image-stage");
@@ -1421,6 +1454,7 @@ describe("manifest-backed screenshot review journey", () => {
     ]) {
       const mobile = await browser.newPage({ viewport });
       await mobile.goto(baseUrl);
+      await showAllSizes(mobile);
       const mobileWide = mobile.locator('[data-capture="page-home--state-default--1280x800"]');
       const mobileNarrow = mobile.locator('[data-capture="page-home--state-default--390x844"]');
       await mobile.locator("#zoomFit").click();
@@ -1566,6 +1600,7 @@ describe("manifest-backed screenshot review journey", () => {
         await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
       ).toBe(true);
       await page.keyboard.press("Escape");
+      await showAllSizes(page);
       const wideCard = page.locator('[data-capture="page-home--state-default--1280x800"]');
       const visibleOpen = wideCard.getByRole("button", { name: "Open Image", exact: true });
       const openBox = await visibleOpen.boundingBox();

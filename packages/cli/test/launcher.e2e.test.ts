@@ -311,7 +311,7 @@ describe("Linux no-terminal launcher controller", () => {
       expect(await page.locator("article.capture").count()).toBe(0);
       await page.locator("#openCompleted").click();
       await page.locator("article.capture").first().waitFor({ timeout: 10_000 });
-      expect(await page.locator("article.capture").count()).toBe(2);
+      expect(await page.locator("article.capture").count()).toBe(1);
     } finally {
       await browser.close();
     }
@@ -346,7 +346,7 @@ describe("Linux no-terminal launcher controller", () => {
       await chooseSizes(page, ["390x844", "1366x768"]);
       await page.locator("#scan").click();
       await page.locator("article.capture").first().waitFor({ timeout: 20_000 });
-      expect(await page.locator("article.capture").count()).toBe(2);
+      expect(await page.locator("article.capture").count()).toBe(1);
       expect(await page.locator("#desktopFilters input[data-facet]").count()).toBeGreaterThan(0);
       await page.locator("article.capture img").first().waitFor();
       expect(await page.locator("article.capture img").first().evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
@@ -399,7 +399,7 @@ describe("Linux no-terminal launcher controller", () => {
       await page.locator("#recent button").first().click();
       await page.locator("article.capture").first().waitFor({ timeout: 10_000 });
       await page.locator("#progress").filter({ hasText: "1 in export" }).waitFor();
-      expect(await page.locator("article.capture").count()).toBe(2);
+      expect(await page.locator("article.capture").count()).toBe(1);
       expect(pageErrors).toEqual([]);
       expect(consoleErrors).toEqual([]);
     } finally {

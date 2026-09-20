@@ -12,6 +12,8 @@ Open an issue from its number on the screenshot or its row in the list. The pane
 
 Nothing else is required. An issue with no decision is *To review*. The status filters in the sidebar (To review / In export / Dismissed) apply to issues, so a screenshot drops out of view when none of its issues match.
 
+**Screen size** in the sidebar is a toggle, not a filter: the review opens on the narrowest size and shows each page once, and picking another size swaps every page to that view. *All sizes* lays the variants side by side. Each size is annotated with how many of the issues in view appear at it. The "Showing N of M" summary counts pages (and scenario states), never size variants, and an issue's panel still lists every size it appears at.
+
 Under **Adjust the highlight** you can move or resize the rectangle that the export will point at, or remove it. The detector's original rectangle is never changed; adjustments are stored beside it.
 
 Decisions persist in `review-state.json`, bound to the exact manifest hash. Settings persist in `review-settings.json`. Export identities persist separately and bind AI output to manifest and review-state digests.

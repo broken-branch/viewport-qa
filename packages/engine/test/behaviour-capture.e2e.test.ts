@@ -220,7 +220,7 @@ describe("scan behaviour capture", () => {
 
       const reviewPage = await browser.newPage();
       await reviewPage.goto(new URL(`file://${join(outDir, "report.html")}`).href);
-      await expect.poll(() => reviewPage.locator("[data-capture]").count()).toBe(2);
+      await expect.poll(() => reviewPage.locator("[data-capture]").count()).toBe(1);
       const firstCard = reviewPage.locator("[data-capture]").first();
       const rowTitles = await firstCard.locator(".issue-row .issue-open").allTextContents();
       expect(rowTitles.some((text) => text.includes("Request to") && text.includes("expected-503"))).toBe(true);
