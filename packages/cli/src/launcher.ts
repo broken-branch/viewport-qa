@@ -26,11 +26,11 @@ const MAX_LOCAL_FILE_BYTES = 8_000_000;
 // admits every valid 8 MB UTF-8 file plus the small, bounded request metadata.
 const MAX_LAUNCH_BODY = MAX_LOCAL_FILE_BYTES * 6 + 100_000;
 const REPORT_INDEX_VERSION = 1;
-type JobStatus = "idle" | "running" | "approval-required" | "cancelled" | "failed" | "complete";
+type JobStatus = "idle" | "running" | "cancelled" | "failed" | "complete";
 interface RecentReport { id: string; name: string; path: string; createdAt: string }
-interface JobState { status: JobStatus; progress: string; reportPath?: string; defaultReportRoot: string; requiredOrigins: string[]; error?: string; warning?: string; focusTarget?: "url" | "recent" }
+interface JobState { status: JobStatus; progress: string; reportPath?: string; defaultReportRoot: string; error?: string; warning?: string; focusTarget?: "url" | "recent" }
 interface ScanRequest { kind?: unknown; url?: unknown; localFile?: { name?: unknown; content?: unknown }; viewports?: unknown }
-interface JobSpec { target: string; localTemporary?: string; viewports: string[]; reportPath: string; allowedOrigins: Set<string> }
+interface JobSpec { target: string; localTemporary?: string; viewports: string[]; reportPath: string }
 interface ActiveJob { id: string; controller: AbortController; spec: JobSpec; promise: Promise<void> }
 type BrowserSetupPhase = "missing" | "installing" | "failed" | "ready";
 
@@ -48,10 +48,6 @@ export interface LauncherOptions {
   idleTimeoutMs?: number;
   log?: (line: string) => void;
   testHooks?: { beforeIndexWrite?: () => void | Promise<void>; beforeShutdownCleanup?: () => void | Promise<void> };
-}
-
-function exactBlockedOrigins(message: string): string[] {
-  return [...new Set([...message.matchAll(/outside the explicit origin allowlist: (https?:\/\/[^;\s]+)/gu)].map((match) => match[1]!))].sort();
 }
 
 async function ensurePrivateDirectory(path: string): Promise<string> {
@@ -119,7 +115,7 @@ export async function launchStudio(options: LauncherOptions = {}): Promise<{ ser
   let cleanupPreparationPromise: Promise<ActiveJob | undefined> | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let shutdownPromise: Promise<void> | undefined;
-  let state: JobState = { status: "idle", progress: "Choose a page or local HTML file.", defaultReportRoot: reportsRoot, requiredOrigins: [] };
+  let state: JobState = { status: "idle", progress: "Choose a page or local HTML file.", defaultReportRoot: reportsRoot };
 
   function browserSetupResponse(): unknown {
     const canInstall = !setupStatus.configuration.offline && download.supported;
@@ -134,7 +130,7 @@ export async function launchStudio(options: LauncherOptions = {}): Promise<{ ser
         networkOrigin: download.networkOrigin,
         destination: setupStatus.cacheRoot,
         configuration: setupStatus.configuration,
-        privacy: "After approval, Playwright downloads the compatible browser over HTTPS. Viewport QA checks the installed file inventory and browser version before use. Scans contact only targets you request.",
+        privacy: "After you confirm, Playwright downloads the compatible browser over HTTPS. Viewport QA checks the installed file inventory and browser version before use. A scan contacts the page you name and the public sites it loads from; private and local addresses are blocked.",
       },
       actions: {
         canInstall: setupPhase !== "ready" && setupPhase !== "installing" && canInstall,
@@ -226,16 +222,14 @@ export async function launchStudio(options: LauncherOptions = {}): Promise<{ ser
 
   async function runJob(job: ActiveJob): Promise<void> {
     const { spec } = job;
-    let keepForApproval = false;
     let published = false;
     let finalState: JobState | undefined;
-    state = { status: "running", progress: "Launching the isolated browser…", reportPath: spec.reportPath, defaultReportRoot: reportsRoot, requiredOrigins: [] };
+    state = { status: "running", progress: "Launching the isolated browser…", reportPath: spec.reportPath, defaultReportRoot: reportsRoot };
     try {
       const report = await scan({
         url: spec.target,
         outDir: spec.reportPath,
         viewports: parseViewportList(spec.viewports.join(",")),
-        allowedOrigins: [...spec.allowedOrigins],
         signal: job.controller.signal,
         log: (line) => { if (activeJob === job) state.progress = line.replace(/^\[vqa\]\s*/u, ""); log(line); },
       });
@@ -245,10 +239,10 @@ export async function launchStudio(options: LauncherOptions = {}): Promise<{ ser
         await activateReport(spec.reportPath);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        finalState = { status: "failed", progress: `The report was published at ${spec.reportPath}, but its review could not open.`, reportPath: spec.reportPath, defaultReportRoot: reportsRoot, requiredOrigins: [], error: message };
+        finalState = { status: "failed", progress: `The report was published at ${spec.reportPath}, but its review could not open.`, reportPath: spec.reportPath, defaultReportRoot: reportsRoot, error: message };
         return;
       }
-      const completed: JobState = { status: "complete", progress: `${report.viewports.length} capture(s) ready for review.`, reportPath: spec.reportPath, defaultReportRoot: reportsRoot, requiredOrigins: [] };
+      const completed: JobState = { status: "complete", progress: `${report.viewports.length} capture(s) ready for review.`, reportPath: spec.reportPath, defaultReportRoot: reportsRoot };
       try {
         await writeIndex({ id: basename(spec.reportPath), name: new URL(report.url).protocol === "file:" ? basename(new URL(report.url).pathname) : new URL(report.url).hostname, path: spec.reportPath, createdAt: report.createdAt });
         if (activeJob === job) finalState = completed;
@@ -260,24 +254,20 @@ export async function launchStudio(options: LauncherOptions = {}): Promise<{ ser
     } catch (error) {
       if (activeJob !== job) return;
       const message = error instanceof Error ? error.message : String(error);
-      const origins = exactBlockedOrigins(message);
-      keepForApproval = !published && !job.controller.signal.aborted && origins.length > 0;
       finalState = job.controller.signal.aborted
-        ? { status: "cancelled", progress: "No report was published.", reportPath: spec.reportPath, defaultReportRoot: reportsRoot, requiredOrigins: [] }
-        : keepForApproval
-          ? { status: "approval-required", progress: "The attempted report was discarded safely.", reportPath: spec.reportPath, defaultReportRoot: reportsRoot, requiredOrigins: origins }
-          : published
-            ? { status: "failed", progress: `The report was published at ${spec.reportPath}, but setup did not finish.`, reportPath: spec.reportPath, defaultReportRoot: reportsRoot, requiredOrigins: [], error: message }
-            : { status: "failed", progress: "No report was published.", reportPath: spec.reportPath, defaultReportRoot: reportsRoot, requiredOrigins: [], error: message };
+        ? { status: "cancelled", progress: "No report was published.", reportPath: spec.reportPath, defaultReportRoot: reportsRoot }
+        : published
+            ? { status: "failed", progress: `The report was published at ${spec.reportPath}, but setup did not finish.`, reportPath: spec.reportPath, defaultReportRoot: reportsRoot, error: message }
+            : { status: "failed", progress: "No report was published.", reportPath: spec.reportPath, defaultReportRoot: reportsRoot, error: message };
     } finally {
       try {
-        if (!keepForApproval) {
+        {
           try {
             await disposeSpec(spec);
             if (jobSpec === spec) jobSpec = undefined;
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            finalState = { status: "failed", progress: "The scan ended, but its temporary upload could not be removed. Stop Viewport QA and inspect the cache directory.", reportPath: spec.reportPath, defaultReportRoot: reportsRoot, requiredOrigins: [], error: message };
+            finalState = { status: "failed", progress: "The scan ended, but its temporary upload could not be removed. Stop Viewport QA and inspect the cache directory.", reportPath: spec.reportPath, defaultReportRoot: reportsRoot, error: message };
             log(`[vqa launcher] temporary upload cleanup failed: ${message}`);
           }
         }
@@ -394,7 +384,7 @@ export async function launchStudio(options: LauncherOptions = {}): Promise<{ ser
     if (!["GET", "HEAD"].includes(request.method ?? "") && origin !== expectedOrigin) { jsonResponse(response, 403, { error: "exact Origin required" }); return; }
     if (idleTimer) idleTimer.refresh();
     if (stopping) { jsonResponse(response, 503, { error: "Viewport QA is stopping" }); request.resume(); return; }
-    const ownMethods: Record<string, readonly string[]> = { "/app": ["GET", "HEAD"], "/api/browser-setup": ["GET"], "/api/browser-setup/install": ["POST"], "/api/job": ["GET"], "/api/scan": ["POST"], "/api/cancel": ["POST"], "/api/approve-origins": ["POST"], "/api/recent": ["GET"], "/api/open-report": ["POST"], "/api/open-folder": ["POST"], "/api/navigation/home": ["POST"], "/api/navigation/new-review": ["POST"], "/api/stop": ["POST"] };
+    const ownMethods: Record<string, readonly string[]> = { "/app": ["GET", "HEAD"], "/api/browser-setup": ["GET"], "/api/browser-setup/install": ["POST"], "/api/job": ["GET"], "/api/scan": ["POST"], "/api/cancel": ["POST"], "/api/recent": ["GET"], "/api/open-report": ["POST"], "/api/open-folder": ["POST"], "/api/navigation/home": ["POST"], "/api/navigation/new-review": ["POST"], "/api/stop": ["POST"] };
     const own = ownMethods[path];
     if (own && !own.includes(request.method ?? "")) { response.setHeader("allow", own.join(", ")); jsonResponse(response, 405, { error: "method not allowed" }); request.resume(); return; }
     if ((request.method === "POST") && request.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() !== "application/json") { jsonResponse(response, 415, { error: "application/json required" }); request.resume(); return; }
@@ -428,7 +418,6 @@ export async function launchStudio(options: LauncherOptions = {}): Promise<{ ser
           ? "Current review saved locally. Ready to start a new review."
           : "Current review saved locally. Recent reports are ready.",
         defaultReportRoot: reportsRoot,
-        requiredOrigins: [],
         focusTarget: newReview ? "url" : "recent",
       };
       jsonResponse(response, 200, { navigated: true, destination: newReview ? "new-review" : "home" });
@@ -444,32 +433,26 @@ export async function launchStudio(options: LauncherOptions = {}): Promise<{ ser
       if (!Array.isArray(body.viewports) || body.viewports.length < 1 || body.viewports.length > 5 || body.viewports.some((item) => typeof item !== "string")) { jsonResponse(response, 400, { error: "choose one to five valid capture sizes" }); return; }
       parseViewportList(body.viewports.join(","));
       const reportPath = join(reportsRoot, timestampName());
-      let target: string; let localTemporary: string | undefined; const allowedOrigins = new Set<string>();
+      let target: string; let localTemporary: string | undefined;
       if (body.kind === "url") {
         if (typeof body.url !== "string") { jsonResponse(response, 400, { error: "enter a web address" }); return; }
         const address = normalizeTargetAddress(body.url);
         let parsed: URL; try { parsed = new URL(address ?? ""); } catch { jsonResponse(response, 400, { error: "enter a web address such as example.com or https://example.com/page" }); return; }
         if (!/^https?:$/u.test(parsed.protocol) || parsed.username || parsed.password) { jsonResponse(response, 400, { error: "only credential-free HTTP(S) addresses can be scanned; use the local file option for a page on disk" }); return; }
-        target = parsed.href; allowedOrigins.add(parsed.origin);
+        target = parsed.href;
       } else if (body.kind === "file") {
         if (!body.localFile || typeof body.localFile.name !== "string" || typeof body.localFile.content !== "string" || ![".html", ".htm"].includes(extname(body.localFile.name).toLowerCase()) || Buffer.byteLength(body.localFile.content) > MAX_LOCAL_FILE_BYTES) { jsonResponse(response, 400, { error: "choose a self-contained UTF-8 HTML file no larger than 8 MB" }); return; }
         const localRoot = await mkdtemp(join(cacheRoot, "local-page-")); localTemporary = join(localRoot, "selected.html"); await writeFile(localTemporary, body.localFile.content, { flag: "wx", mode: 0o600 }); target = pathToFileURL(localTemporary).href;
       } else { jsonResponse(response, 400, { error: "choose a web address or local HTML file" }); return; }
-      jobSpec = { target, ...(localTemporary ? { localTemporary } : {}), viewports: body.viewports as string[], reportPath, allowedOrigins };
+      jobSpec = { target, ...(localTemporary ? { localTemporary } : {}), viewports: body.viewports as string[], reportPath };
       startJob(jobSpec); jsonResponse(response, 202, state); return;
     }
     if (path === "/api/cancel" && request.method === "POST") {
       request.resume();
       if (activeJob) { activeJob.controller.abort(new Error("Scan cancelled")); jsonResponse(response, 202, { ...state, progress: "Cancelling safely…" }); return; }
-      if (state.status === "approval-required" && jobSpec) { const reportPath = state.reportPath; await disposeSpec(jobSpec); jobSpec = undefined; state = { status: "cancelled", progress: "The pending upload was removed. No report was published.", ...(reportPath ? { reportPath } : {}), defaultReportRoot: reportsRoot, requiredOrigins: [] }; jsonResponse(response, 200, state); return; }
-      jsonResponse(response, 409, { error: "no scan is running or awaiting approval" }); return;
+      jsonResponse(response, 409, { error: "no scan is running" }); return;
     }
-    if (path === "/api/approve-origins" && request.method === "POST") {
-      if (activeJob) { jsonResponse(response, 409, { error: "a scan is already running" }); request.resume(); return; }
-      const body = await parseJson(request); if (state.status !== "approval-required" || !jobSpec || !Array.isArray(body.origins) || body.origins.length !== state.requiredOrigins.length || body.origins.some((item, index) => item !== state.requiredOrigins[index])) { jsonResponse(response, 400, { error: "approve the exact origins identified for this job" }); return; }
-      for (const originValue of state.requiredOrigins) jobSpec.allowedOrigins.add(originValue); startJob(jobSpec); jsonResponse(response, 202, state); return;
-    }
-    if (path === "/api/open-report" && request.method === "POST") { if (activeJob) { jsonResponse(response, 409, { error: "finish or cancel the active scan before opening a report" }); request.resume(); return; } const body = await parseJson(request); const report = (await readIndex()).find((item) => item.id === body.id); if (!report) { jsonResponse(response, 404, { error: "report is not in this launcher's recent list" }); return; } await disposeSpec(jobSpec); jobSpec = undefined; await activateReport(report.path); state = { status: "complete", progress: "Report opened.", reportPath: report.path, defaultReportRoot: reportsRoot, requiredOrigins: [] }; jsonResponse(response, 200, state); return; }
+    if (path === "/api/open-report" && request.method === "POST") { if (activeJob) { jsonResponse(response, 409, { error: "finish or cancel the active scan before opening a report" }); request.resume(); return; } const body = await parseJson(request); const report = (await readIndex()).find((item) => item.id === body.id); if (!report) { jsonResponse(response, 404, { error: "report is not in this launcher's recent list" }); return; } await disposeSpec(jobSpec); jobSpec = undefined; await activateReport(report.path); state = { status: "complete", progress: "Report opened.", reportPath: report.path, defaultReportRoot: reportsRoot }; jsonResponse(response, 200, state); return; }
     if (path === "/api/open-folder" && request.method === "POST") { request.resume(); await openWithDesktop(reportsRoot); jsonResponse(response, 202, { opened: true }); return; }
     if (path === "/api/stop" && request.method === "POST") { request.resume(); stopping = true; jsonResponse(response, 202, { stopping: true }); setImmediate(() => { void shutdownService(); }); return; }
     if (internal && (path.startsWith("/api/") || path !== "/")) { await proxy(request, response); return; }

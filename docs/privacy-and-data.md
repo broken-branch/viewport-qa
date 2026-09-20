@@ -1,6 +1,6 @@
 # Privacy and data
 
-A scan loads only the local/loopback resources or exact public origins admitted by restricted mode. It collects DOM-derived geometry, computed styles, selectors, URLs, detected issue descriptions, and screenshots. During each capture it also records this browser behaviour from the existing Playwright page and context:
+A scan loads the page and the resources it references from public origins, as a browser would; a public page cannot reach private or local addresses. It collects DOM-derived geometry, computed styles, selectors, URLs, detected issue descriptions, and screenshots. During each capture it also records this browser behaviour from the existing Playwright page and context:
 
 - Console messages whose level is `error` or `warning`: message text, source URL, and line number.
 - Requests that fail or return HTTP 4xx/5xx: method, URL, and either HTTP status or browser failure reason.

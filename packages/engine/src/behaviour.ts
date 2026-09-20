@@ -388,6 +388,10 @@ export async function capturePageBehaviour(page: Page, context: BrowserContext):
     pendingResponses.add(pending);
   });
   page.on("requestfailed", (request: Request) => {
+    // The browser cancelling a request (navigation, unload beacons, the
+    // scan's own policy block) says nothing about the page.
+    const errorText = request.failure()?.errorText ?? "";
+    if (/^net::ERR_(?:ABORTED|BLOCKED_BY_CLIENT)/u.test(errorText)) return;
     const record = {
       method: boundedField(request.method()),
       url: boundedField(request.url()),

@@ -81,9 +81,10 @@ Default viewports when `--viewports` is omitted: `360x800, 390x844, 390x844@3, 7
 
 ## Security model
 
-Viewport QA treats every scanned page as untrusted and fails closed:
+Viewport QA treats every scanned page as untrusted:
 
-- Local files and loopback targets work out of the box. Any other origin — the target, its redirects, its CDNs — must be listed explicitly with `--allow-origin`, and requests to anything else are blocked before they leave the browser. Private and reserved DNS answers are rejected.
+- A page loads what a browser would load: its own origin plus any public CDN, font, or script host. What it can never do is reach *inward*: a public page's requests to loopback, private, or reserved addresses are blocked before they leave the browser, as are downloads, popups, and service workers. Local files and `localhost` targets may talk to other local services, since that is your own environment.
+- `--strict` limits a scan to the target origin plus each `--allow-origin` you list, for when you need to know exactly what was contacted.
 - The review service binds to `127.0.0.1` only, on a random free port, with a per-launch capability token that is never printed or logged. It is not designed to sit behind a proxy.
 - Report writes are transactional; a non-empty `--out` directory is refused rather than overwritten.
 - Report assets are hash-bound; review state and exports are bound to the manifest they came from.

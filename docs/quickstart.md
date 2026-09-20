@@ -23,7 +23,7 @@ vqa scan https://example.com --viewports 390x844,1280x800 --out ./report
 
 Omit `--viewports` for the default matrix of eight common sizes. The output directory must be new or empty; Viewport QA never overwrites a report.
 
-Local files and `localhost` targets need no extra flags. A public site's first-party origin is admitted automatically; if the page pulls resources from other origins (a CDN, a redirect), the scan stops and names them, and you rerun with `--allow-origin https://cdn.example.com` for each one you trust. That is deliberate — see [security](security.md).
+The page loads exactly what it would in a browser — its own origin and the public CDNs, fonts, and scripts it references. Redirects are followed and the final URL is recorded. Private and local addresses are never reachable from a public page; `--strict` limits a scan to origins you name. See [security](security.md).
 
 When the scan finishes it prints a summary with likely defects first, then the command to open the review.
 

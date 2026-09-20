@@ -57,8 +57,10 @@ export interface ScanOptions {
   maxPages?: number;
   /** Maximum link depth from the start page when crawling (default 2, hard cap 10). */
   maxDepth?: number;
-  /** Exact public origins admitted for navigation and page resources. */
+  /** Exact origins admitted beyond the target; listing any makes the scan strict. */
   allowedOrigins?: readonly string[];
+  /** Contact only the target origin and `allowedOrigins`. Off by default. */
+  strict?: boolean;
   /** Validated named page states to capture instead of the initial target state. */
   scenarios?: readonly Scenario[];
   /** Cancels an in-flight scan while preserving transactional cleanup. */
@@ -102,6 +104,8 @@ async function scanInto(options: ScanOptions): Promise<Report> {
   const targetPolicy = await createTargetPolicy({
     targetUrl: options.url,
     ...(options.allowedOrigins ? { allowedOrigins: options.allowedOrigins } : {}),
+    ...(options.strict !== undefined ? { strict: options.strict } : {}),
+    confineNavigation: Boolean(options.crawl),
   });
   if (scenarios) {
     for (const scenario of scenarios) {

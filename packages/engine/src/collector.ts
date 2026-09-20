@@ -349,6 +349,8 @@ export function collectSnapshot(maxElements: number): Snapshot {
   // document order, so each entry only needs its parent's entry).
   const treeHidden: boolean[] = [];
   const treeStyleHidden: boolean[] = [];
+  const treeOpacityHidden: boolean[] = [];
+  const treeFixed: boolean[] = [];
   const treeScrollable: boolean[] = [];
   const treeClip: (Rect | null)[] = [];
   const treeOwnOpacity: number[] = [];
@@ -466,6 +468,14 @@ export function collectSnapshot(maxElements: number): Snapshot {
       style.visibility === "collapse" ||
       ownOpacity <= 0;
     treeStyleHidden.push(styleHiddenInTree);
+    // Opacity composes down the tree: a child of an opacity:0 slide paints
+    // nothing even though its own opacity is 1.
+    const opacityHiddenInTree =
+      (parentIndex >= 0 && treeOpacityHidden[parentIndex]!) || ownOpacity <= 0.01;
+    treeOpacityHidden.push(opacityHiddenInTree);
+    const inFixedLayer =
+      (parentIndex >= 0 && treeFixed[parentIndex]!) || style.position === "fixed";
+    treeFixed.push(inFixedLayer);
 
     const ownBackgroundColor = parseColor(style.backgroundColor);
     treeOwnOpacity.push(ownOpacity);
@@ -588,7 +598,7 @@ export function collectSnapshot(maxElements: number): Snapshot {
       }
     }
 
-    const visible = renderedVisible && !hiddenInTree && !srOnly;
+    const visible = renderedVisible && !hiddenInTree && !opacityHiddenInTree && !srOnly;
     const semantic = semanticIdentity(element, directText);
     const borderWidths = [
       style.borderTopWidth,
@@ -626,6 +636,7 @@ export function collectSnapshot(maxElements: number): Snapshot {
       elementFingerprint: semantic.fingerprint,
       rect: pageRect,
       visibleRect,
+      clipRect: inheritedClip,
       clientWidth: element.clientWidth,
       clientHeight: element.clientHeight,
       scrollWidth: element.scrollWidth,
@@ -638,6 +649,7 @@ export function collectSnapshot(maxElements: number): Snapshot {
       visible,
       interactive,
       inPageLink: tag === "a" && (element.getAttribute("href") ?? "").startsWith("#"),
+      inFixedLayer,
       srOnly,
       hasScrollableAncestor,
       stretchedTarget,

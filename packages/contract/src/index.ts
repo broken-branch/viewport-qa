@@ -46,6 +46,8 @@ export interface ElementMetric {
    * seen at once (fully clipped, or beyond a scroll container's box).
    */
   visibleRect: Rect;
+  /** The accumulated clip box of the element's ancestors, or null when nothing above it clips. */
+  clipRect: Rect | null;
   clientWidth: number;
   clientHeight: number;
   scrollWidth: number;
@@ -65,6 +67,8 @@ export interface ElementMetric {
   interactive: boolean;
   /** An <a> whose href targets a fragment of the current page (skip link, table of contents). */
   inPageLink: boolean;
+  /** The element or an ancestor is position: fixed — a layer over the page (modal, banner, sticky header). */
+  inFixedLayer: boolean;
   /**
    * Matches the standard visually-hidden/sr-only signature: ~1px box clamped
    * via clip/clip-path/hidden overflow. Intentional a11y pattern, never a

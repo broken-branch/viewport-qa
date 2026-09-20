@@ -24,12 +24,12 @@ vqa browser status|install|repair|remove [--json]
 vqa scan <url-or-file> [--viewports WxH[@DPR],...] [--out <dir>]
   [--timeout <ms>] [--baseline <report-dir>] [--scenarios <file>] [--crawl]
   [--max-pages <n>] [--max-depth <n>]
-  [--allow-origin <exact-http-origin>]...
+  [--strict] [--allow-origin <exact-http-origin>]...
   [--model-cli codex|claude] [--model-cli-bin <path>]
   [--model-cli-timeout <ms>]
 ```
 
-The default output is `./vqa-report`. The destination must be absent or empty. Crawling is off by default; when enabled it is same-origin breadth-first with default limits of 10 pages and depth 2, hard limits 50 and 10. Local files, loopback, and the origin named in the target URL need no flag. Repeat `--allow-origin` for each exact redirect or CDN/resource origin the page needs beyond that. Unlisted origins fail closed. `--model-cli` is explicit opt-in and never implies API-key billing.
+The default output is `./vqa-report`. The destination must be absent or empty. Crawling is off by default; when enabled it is same-origin breadth-first with default limits of 10 pages and depth 2, hard limits 50 and 10. A page may load from any public origin and follow redirects, as in a browser; a public page cannot reach loopback, private, or reserved addresses, and downloads, popups, and service workers are always blocked. `--strict` limits the scan to the target origin plus each exact `--allow-origin`; listing any origin implies `--strict`. `--model-cli` is explicit opt-in and never implies API-key billing.
 
 Every successful scan writes `agent-summary.json` and `contact-sheet.html` beside `issues.json`. Its stdout summary labels every grouped-defect line as `[likely-defect]` or `[detector-finding]` and lists likely defects first.
 
