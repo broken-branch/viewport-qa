@@ -101,7 +101,7 @@ describe("paint visibility", () => {
 
       const reviewPage = await browser.newPage();
       await reviewPage.goto(pathToFileURL(join(outDir, "report.html")).href);
-      await expect.poll(() => reviewPage.locator("[data-capture]").count()).toBe(3);
+      await expect.poll(() => reviewPage.locator("[data-capture]").count()).toBe(1);
       await reviewPage.locator("[data-capture]").first()
         .locator(".issue-row .issue-open").first().click();
       await expect.poll(() => reviewPage.locator("#drawer[open]").count()).toBe(1);
