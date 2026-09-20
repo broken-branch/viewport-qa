@@ -373,9 +373,14 @@ describe("manifest-backed screenshot review journey", () => {
     expect(await noIssueCard.locator(".issue-row").count()).toBe(0);
 
     await page.locator("#exportButton").tap();
+    await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBe("");
+    await expect
+      .poll(() => page.locator("#drawer").evaluate((drawer) => drawer.classList.contains("opening")))
+      .toBe(false);
     const humanAudience = page.getByRole("radio", { name: /Human/ });
     const aiAudience = page.getByRole("radio", { name: /^AI/ });
     await aiAudience.focus();
+    await expect.poll(() => aiAudience.evaluate((element) => element === document.activeElement)).toBe(true);
     await aiAudience.press("Space");
     await expect.poll(() => aiAudience.isChecked()).toBe(true);
     await humanAudience.tap();
