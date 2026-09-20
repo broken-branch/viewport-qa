@@ -51,10 +51,10 @@ describe("createHumanHandoffContent", () => {
     expect(first.indexOf("1. Checkout total is clipped")).toBeGreaterThan(0);
     expect(first.indexOf("1. Checkout total is clipped")).toBeLessThan(first.indexOf("2. Primary action is hard to read"));
     expect(first).toContain("What was found: The order total does not fit in its available space.");
-    expect(first).toContain("Where: Checkout at 390 × 844; Checkout at 1280 × 800");
+    expect(first).toContain("Where: Checkout at Mobile 390×844; Checkout at Desktop 1280×800");
     expect(first).toContain("Reviewer note: Give the total enough room.");
     expect(first).toContain("Suggested fix:");
-    expect(first).toContain("Screenshots: 390 × 844:");
+    expect(first).toContain("Screenshots: Mobile 390×844:");
     expect(first.match(/Source: https:\/\/northstar\.example\/checkout/gu)).toHaveLength(1);
     expect(first).toContain("Issues the reviewer dismissed or did not select are not included.");
     expect(first).not.toMatch(/VQ-|audit|hash|policy|reason code|schema|format|version/iu);

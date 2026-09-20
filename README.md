@@ -28,7 +28,7 @@ vqa open ./report
 
 Your system browser opens the review. Each issue is numbered on its screenshot; click one to see the close-up and exactly what was found, then **Add to export** or **Dismiss**. **Export** turns the list into a human or AI handoff.
 
-Don't want a terminal at all? `vqa launch` opens a start page where you type a URL, pick viewports, and scan from the browser.
+Don't want a terminal at all? `vqa launch` opens a start page where you type a URL, pick the devices and sizes to capture, and scan from the browser.
 
 For a walkthrough of the whole loop see the [quick start](docs/quickstart.md).
 
@@ -77,7 +77,15 @@ Only painted elements are inspected, so hidden DOM (closed `<select>` options, `
 | `vqa browser status\|install\|repair\|remove` | Manage the pinned Chromium |
 | `vqa doctor` | Check Node, platform, cache, and browser health |
 
-Default viewports when `--viewports` is omitted: `360x800, 390x844, 390x844@3, 768x1024, 1280x800, 1440x900, 1920x1080, 2560x1440`. Full options and exit codes are in the [CLI reference](docs/cli-reference.md).
+Captures are chosen by device class. `--devices mobile,tablet,desktop` takes any of the three; each contributes its common sizes, and every capture is labelled with its class (**Mobile 390×844**, **Desktop 1920×1080**). With neither flag a scan covers all three classes:
+
+| Device | Sizes |
+| --- | --- |
+| Mobile | 360×800, 390×844, 430×932 |
+| Tablet | 768×1024, 820×1180, 1024×1366 |
+| Desktop | 1366×768, 1536×864, 1920×1080, 2560×1440 |
+
+`--viewports 390x844@3,1280x800` names explicit sizes instead (`@DPR` for a device pixel ratio other than 1). Full options and exit codes are in the [CLI reference](docs/cli-reference.md).
 
 ## Security model
 

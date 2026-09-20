@@ -76,6 +76,14 @@ export type {
 } from "./browser-manager.js";
 export {
   DEFAULT_VIEWPORT_SPECS,
+  DEVICE_CLASS_IDS,
+  DEVICE_CLASSES,
+  describeViewport,
+  deviceClassForWidth,
+  deviceClassLabel,
+  parseDeviceList,
   parseViewport,
   parseViewportList,
+  viewportsForDevices,
+  type DeviceClassSpec,
 } from "./viewports.js";

@@ -21,13 +21,15 @@ vqa browser status|install|repair|remove [--json]
 ## `scan`
 
 ```text
-vqa scan <url-or-file> [--viewports WxH[@DPR],...] [--out <dir>]
-  [--timeout <ms>] [--baseline <report-dir>] [--scenarios <file>] [--crawl]
+vqa scan <url-or-file> [--devices mobile,tablet,desktop | --viewports WxH[@DPR],...]
+  [--out <dir>] [--timeout <ms>] [--baseline <report-dir>] [--scenarios <file>] [--crawl]
   [--max-pages <n>] [--max-depth <n>]
   [--strict] [--allow-origin <exact-http-origin>]...
   [--model-cli codex|claude] [--model-cli-bin <path>]
   [--model-cli-timeout <ms>]
 ```
+
+`--devices` selects device classes; each contributes its common sizes (mobile 360×800, 390×844, 430×932; tablet 768×1024, 820×1180, 1024×1366; desktop 1366×768, 1536×864, 1920×1080, 2560×1440). With neither flag every class is captured. `--viewports` names explicit `WxH` or `WxH@DPR` sizes instead and cannot be combined with `--devices`; an explicit size is still labelled with the class its width falls in (under 600 px mobile, under 1200 px tablet, otherwise desktop).
 
 The default output is `./vqa-report`. The destination must be absent or empty. Crawling is off by default; when enabled it is same-origin breadth-first with default limits of 10 pages and depth 2, hard limits 50 and 10. A page may load from any public origin and follow redirects, as in a browser; a public page cannot reach loopback, private, or reserved addresses, and downloads, popups, and service workers are always blocked. `--strict` limits the scan to the target origin plus each exact `--allow-origin`; listing any origin implies `--strict`. `--model-cli` is explicit opt-in and never implies API-key billing.
 

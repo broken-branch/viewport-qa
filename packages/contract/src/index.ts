@@ -11,7 +11,15 @@ export {
   PROTOCOL_IDENTITY,
 } from "./product.js";
 
-export interface ViewportSpec { width: number; height: number; deviceScaleFactor: number; label: string }
+/** Device class a capture stands in for; inferred from the viewport width when a spec does not name one. */
+export type DeviceClass = "mobile" | "tablet" | "desktop";
+export interface ViewportSpec {
+  width: number; height: number; deviceScaleFactor: number;
+  /** `WxH@DPR`; identifies the capture within a run and names its screenshot directory. */
+  label: string;
+  /** Absent on reports written before device classes existed. */
+  device?: DeviceClass;
+}
 export interface ScenarioTarget { role: string; name: string }
 
 export type ScenarioStep =
@@ -429,7 +437,7 @@ export interface ReviewAsset {
 }
 export interface ReviewManifestPage { id: string; label: string; url: string }
 export interface ReviewManifestState { id: string; label: string; arrangement_provenance: string }
-export interface ReviewManifestResolution { label: string; width: number; height: number; device_scale_factor: number }
+export interface ReviewManifestResolution { label: string; width: number; height: number; device_scale_factor: number; device?: DeviceClass }
 export interface ReviewManifestOccurrence {
   capture_coordinate_id: string; rect: Rect; semantic_name: string; technical_locator: string;
   /** The detector's exact finding for this capture, with its measurements. Absent in older manifests. */

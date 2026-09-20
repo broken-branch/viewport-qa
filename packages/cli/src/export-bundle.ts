@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve, sep } from "node:path";
-import { isLinkFreeExistingPath, renderHumanHandoffPdf } from "@vqa/engine";
+import { describeViewport, isLinkFreeExistingPath, renderHumanHandoffPdf } from "@vqa/engine";
 import type {
   ExportIdentity,
   IssueReview,
@@ -23,6 +23,7 @@ import type {
   ReviewAsset,
   ReviewManifest,
   ReviewManifestIssue,
+  ReviewManifestResolution,
   ReviewState,
 } from "@vqa/contract";
 
@@ -419,6 +420,16 @@ function boundedHumanText(value: string, maximum: number): string {
  * concern is what a reader scans for, so it leads, and the subject (the
  * element's accessible name or text) follows when it is human-readable.
  */
+/** "Mobile 390×844": the device class and pixels a reviewer reads a capture by. */
+function sizeName(resolution: ReviewManifestResolution): string {
+  return describeViewport({
+    width: resolution.width,
+    height: resolution.height,
+    deviceScaleFactor: resolution.device_scale_factor,
+    ...(resolution.device ? { device: resolution.device } : {}),
+  });
+}
+
 function humanIssueTitle(issue: ReviewManifest["issues"][number]): string {
   const title = issue.title.trim();
   const subject = issue.semantic_name?.trim() && !containsTechnicalLocator(issue.semantic_name, issue)
@@ -480,11 +491,11 @@ export function createHumanHandoffContent(options: HumanHandoffContentOptions): 
     );
     const where = occurrences.map((occurrence) => {
       const scenario = occurrence.state.arrangement_provenance === "scenario-recipe" ? `, ${occurrence.state.label}` : "";
-      return `${occurrence.page.label}${scenario} at ${occurrence.resolution.label}`;
+      return `${occurrence.page.label}${scenario} at ${sizeName(occurrence.resolution)}`;
     });
     const measurements = occurrences
       .filter((occurrence) => occurrence.message && occurrence.message !== observed)
-      .map((occurrence) => `${occurrence.resolution.label}: ${occurrence.message}`);
+      .map((occurrence) => `${sizeName(occurrence.resolution)}: ${occurrence.message}`);
     lines.push(`${index + 1}. ${title}`);
     lines.push(`   Severity: ${issue.severity}; ${confidenceLabel(issue)}.`);
     lines.push(`   What was found: ${observed}`);
@@ -498,7 +509,7 @@ export function createHumanHandoffContent(options: HumanHandoffContentOptions): 
     const evidence = occurrences.map((occurrence) => {
       const full = manifest.assets.find((asset) => asset.sha256 === occurrence.full_screenshot_asset_sha256)!;
       const crop = occurrence.crop_asset_sha256 ? manifest.assets.find((asset) => asset.sha256 === occurrence.crop_asset_sha256) : undefined;
-      return `${occurrence.resolution.label}: ${full.source_relative_path}${crop ? ` (close-up ${crop.source_relative_path})` : ""}`;
+      return `${sizeName(occurrence.resolution)}: ${full.source_relative_path}${crop ? ` (close-up ${crop.source_relative_path})` : ""}`;
     });
     lines.push(`   Screenshots: ${evidence.join("; ")}`);
     lines.push("");
@@ -529,7 +540,7 @@ export async function createHumanHandoffPdf(options: HumanHandoffPdfOptions): Pr
       const source = await validatedSource(reportRoot, asset);
       const bytes = await readFile(source);
       images.push({
-        label: `${index + 1}. ${humanIssueTitle(issue)} — ${occurrence.page.label}, ${occurrence.resolution.label}`,
+        label: `${index + 1}. ${humanIssueTitle(issue)} — ${occurrence.page.label}, ${sizeName(occurrence.resolution)}`,
         mediaType: asset.media_type,
         base64: bytes.toString("base64"),
       });

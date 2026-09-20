@@ -21,7 +21,7 @@ Scan any URL you are authorized to test, or a local HTML file:
 vqa scan https://example.com --viewports 390x844,1280x800 --out ./report
 ```
 
-Omit `--viewports` for the default matrix of eight common sizes. The output directory must be new or empty; Viewport QA never overwrites a report.
+Omit `--viewports` to capture every device class (mobile, tablet, and desktop, ten common sizes in all), or pick classes with `--devices mobile,desktop`. The output directory must be new or empty; Viewport QA never overwrites a report.
 
 The page loads exactly what it would in a browser — its own origin and the public CDNs, fonts, and scripts it references. Redirects are followed and the final URL is recorded. Private and local addresses are never reachable from a public page; `--strict` limits a scan to origins you name. See [security](security.md).
 

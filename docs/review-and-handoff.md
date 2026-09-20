@@ -1,6 +1,6 @@
 # Review and handoff
 
-The unit of review is an issue: one concern, on one element, across every screen size it appears at. A screenshot card shows its issues as numbered highlights on the image and as a list underneath; the same number appears in both.
+The unit of review is an issue: one concern, on one element, across every screen size it appears at. Sizes are named by device class and pixels, such as **Mobile 390×844** or **Desktop 1920×1080**. A screenshot card shows its issues as numbered highlights on the image and as a list underneath; the same number appears in both.
 
 ## Deciding
 
