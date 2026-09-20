@@ -9,6 +9,7 @@ First public release, published to npm as `viewport-qa`.
 - `vqa scan example.com` and the launch page accept a bare address; `https://` is inferred (`http://` for loopback).
 - Scans ordinary live sites: a page loads from any public origin as it would in a browser, redirects are followed, unsupported schemes are dropped quietly, and a request the page itself cancelled no longer fails the scan. `--strict` keeps the allowlist behaviour. The launch page no longer stops to approve origins.
 - Before capture, the page is scrolled once to trigger lazy loads and scroll-reveal animations, with reduced motion and instant transitions so captures show the settled page.
+- Layered-for-effect compositions are not defects: text or a control over a photo (no overlap, no contrast check), a modal's scroll lock, and controls parked far off-canvas.
 - More detector noise removed on real pages: elements under an opacity-0 ancestor are not visible, a fixed overlay never "overlaps" the page beneath it, overflow only counts when it is painted outside the box, and requests the browser aborted are not failed requests.
 
 - Renamed from the private "Visual QA Review" project. Reports now record `tool: "viewport-qa"`; the per-user cache moved to `~/.cache/viewport-qa` (Linux), `~/Library/Caches/Viewport QA` (macOS), and `%LOCALAPPDATA%\Viewport QA` (Windows). The `vqa` command and every `VQA_*` environment variable are unchanged.
