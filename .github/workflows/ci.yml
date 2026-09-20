@@ -30,6 +30,12 @@ jobs:
 
       - run: pnpm run build
 
+      # Ubuntu 24.04 runners block unprivileged user namespaces through
+      # AppArmor, which stops Chromium's sandbox from starting. Viewport QA
+      # deliberately never launches Chromium without its sandbox, so allow
+      # the namespaces on the runner instead.
+      - run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       # The engine launches Playwright Chromium from its own per-user cache;
       # some engine tests also drive Playwright directly from the stock cache.
       - run: node packages/cli/dist/bin.js browser install
