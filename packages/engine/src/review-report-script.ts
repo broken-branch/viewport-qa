@@ -41,7 +41,14 @@ let lightboxAsset = null;
 let lightboxZoom = 1;
 let lightboxFit = false;
 const STATUSES = ["unreviewed","export","dismissed"];
-const selected = { page:new Set(manifest.pages.map(function(item){return item.id;})), scenario:new Set(manifest.states.map(function(item){return item.id;})), resolution:new Set(manifest.captures.map(function(item){return item.resolution.label;})), status:new Set(STATUSES) };
+const selected = { page:new Set(manifest.pages.map(function(item){return item.id;})), scenario:new Set(manifest.states.map(function(item){return item.id;})), status:new Set(STATUSES) };
+/* Sizes are alternative views of one page, looked at one at a time: a single choice, narrowest first, with "all" as the way out. */
+const sizeLabels = (function(){ const seen=new Map(); manifest.captures.forEach(function(capture){ if(!seen.has(capture.resolution.label)) seen.set(capture.resolution.label, capture.resolution); }); return Array.from(seen.values()).sort(function(a,b){ return a.width-b.width || a.height-b.height || (a.device_scale_factor||1)-(b.device_scale_factor||1); }).map(function(resolution){ return resolution.label; }); })();
+let sizeChoice = sizeLabels.length > 1 ? sizeLabels[0] : null;
+function sizeMatches(capture) { return sizeChoice === null || capture.resolution.label === sizeChoice; }
+function screenKey(capture) { return capture.page_id + "\u0000" + capture.state_id; }
+function screenCount(captures) { return new Set(captures.map(screenKey)).size; }
+function screenUnit(count) { return count === 1 ? (scenarioEnabled ? "page state" : "page") : (scenarioEnabled ? "page states" : "pages"); }
 
 function node(tag, attributes, children) {
   const element = document.createElement(tag);
@@ -63,7 +70,7 @@ function stateFor(capture) { return stateById.get(capture.state_id); }
 function captureIssues(capture) { return capture.issue_ids.map(function(id){return issueById.get(id);}).filter(Boolean); }
 function issuesShownOn(capture) { return captureIssues(capture).filter(function(issue){return selected.status.has(issueStatus(issue.id));}); }
 function statusMatches(capture) { return capture.issue_ids.length===0 ? selected.status.has("unreviewed") : issuesShownOn(capture).length>0; }
-function matches(capture) { return selected.page.has(capture.page_id) && (!scenarioEnabled || selected.scenario.has(capture.state_id)) && selected.resolution.has(capture.resolution.label) && statusMatches(capture); }
+function matches(capture) { return selected.page.has(capture.page_id) && (!scenarioEnabled || selected.scenario.has(capture.state_id)) && sizeMatches(capture) && statusMatches(capture); }
 function announce(text) { document.getElementById("liveRegion").textContent = text; }
 /* Human name for a capture size: device class plus pixels, matching describeViewport() in the engine. Manifests written before device classes carry no device, so the class is read from the width. */
 function deviceName(resolution) { const device = resolution.device || (resolution.width < 600 ? "mobile" : resolution.width < 1200 ? "tablet" : "desktop"); return device.charAt(0).toUpperCase() + device.slice(1); }
@@ -101,45 +108,61 @@ function facetMarkup(facet, label, options) {
       const replacement = scope.querySelector('input[data-facet="' + facet + '"][value="' + CSS.escape(value) + '"]');
       if (replacement) replacement.focus();
     });
-    const otherFacetsMatch = function(capture) {
-      return Object.entries(selected).every(function(entry) {
-        const name = entry[0], values = entry[1];
-        if (name === facet || name === "status") return true;
-        const candidate = name === "page" ? capture.page_id : name === "scenario" ? capture.state_id : capture.resolution.label;
-        return values.has(candidate);
-      });
-    };
     let count;
     if (facet === "status") {
+      // Issue counts cover every size the issue appears at, whichever size is on show.
       const seen = new Set();
-      manifest.captures.filter(otherFacetsMatch).forEach(function(capture){capture.issue_ids.forEach(function(id){if(issueStatus(id)===value)seen.add(id);});});
+      manifest.captures.filter(function(capture){return otherFacetsMatch(facet, capture);}).forEach(function(capture){capture.issue_ids.forEach(function(id){if(issueStatus(id)===value)seen.add(id);});});
       count = seen.size;
     } else {
       count = manifest.captures.filter(function(capture) {
         if (facet === "page" && capture.page_id !== value) return false;
         if (facet === "scenario" && capture.state_id !== value) return false;
-        if (facet === "resolution" && capture.resolution.label !== value) return false;
-        return otherFacetsMatch(capture) && statusMatches(capture);
+        return otherFacetsMatch(facet, capture) && sizeMatches(capture) && statusMatches(capture);
       }).length;
     }
     fieldset.appendChild(node("label", {class:"check"}, [input,node("span",{text:text}),node("span",{class:"count","aria-hidden":"true",text:String(count)})]));
   });
   return fieldset;
 }
-function filterControls() {
+function otherFacetsMatch(facet, capture) {
+  return (facet === "page" || selected.page.has(capture.page_id)) && (facet === "scenario" || !scenarioEnabled || selected.scenario.has(capture.state_id));
+}
+function sizeMarkup(scope) {
+  const fieldset = node("fieldset", {}, [node("legend", {text:"Screen size"})]);
+  const options = [[null, "All sizes"]].concat(sizeLabels.map(function(label){ return [label, sizeName(manifest.captures.find(function(capture){return capture.resolution.label===label;}).resolution)]; }));
+  options.forEach(function(option) {
+    const value = option[0], text = option[1];
+    const input = node("input", {type:"radio", name:"size-"+scope, value:value===null?"":value, "data-facet":"resolution"});
+    input.checked = sizeChoice === value;
+    input.addEventListener("change", function() {
+      if (!input.checked) return;
+      sizeChoice = value;
+      render();
+      const container = drawerMode === "filters" ? document.getElementById("drawerBody") : document;
+      const replacement = container.querySelector('input[data-facet="resolution"][value="' + CSS.escape(input.value) + '"]');
+      if (replacement) replacement.focus();
+      announce(value === null ? "Showing every size" : "Showing " + text);
+    });
+    const children = [input, node("span",{text:text})];
+    // Each size is annotated with how many of the issues in view appear at it.
+    if (value !== null) { const seen = new Set(); manifest.captures.filter(function(capture){ return capture.resolution.label === value && otherFacetsMatch("", capture); }).forEach(function(capture){ issuesShownOn(capture).forEach(function(issue){ seen.add(issue.id); }); }); children.push(node("span",{class:"count","aria-hidden":"true",text:String(seen.size)})); }
+    fieldset.appendChild(node("label", {class:"check"}, children));
+  });
+  return fieldset;
+}
+function filterControls(scope) {
   const fragment = document.createDocumentFragment();
+  fragment.appendChild(sizeMarkup(scope));
   fragment.appendChild(facetMarkup("status","Issues",[["unreviewed","To review"],["export","In export"],["dismissed","Dismissed"]]));
   fragment.appendChild(facetMarkup("page","Page",manifest.pages.map(function(item){return [item.id,item.label];})));
   if(scenarioEnabled) fragment.appendChild(facetMarkup("scenario","Scenario",manifest.states.map(function(item){return [item.id,item.label];})));
-  const resolutions = new Map();
-  manifest.captures.forEach(function(item){ if(!resolutions.has(item.resolution.label)) resolutions.set(item.resolution.label, sizeName(item.resolution)); });
-  fragment.appendChild(facetMarkup("resolution","Screen size",Array.from(resolutions.entries())));
   return fragment;
 }
 function clearFilters() {
   selected.page = new Set(manifest.pages.map(function(item){return item.id;}));
   selected.scenario = new Set(manifest.states.map(function(item){return item.id;}));
-  selected.resolution = new Set(manifest.captures.map(function(item){return item.resolution.label;}));
+  sizeChoice = null;
   selected.status = new Set(STATUSES);
   render(); announce("Showing all screenshots");
 }
@@ -287,12 +310,14 @@ function updateStorageControls() { document.querySelectorAll("[data-storage-acti
 function showStorageError(message) { storageAvailable=false;const error=document.getElementById("storageError");document.getElementById("storageErrorText").textContent=message;error.hidden=false;updateStorageControls();announce(message); }
 function clearStorageError(announceRecovery) { storageAvailable=true;document.getElementById("storageError").hidden=true;updateStorageControls();if(announceRecovery)announce("Review storage connected. Saving and export are available."); }
 function render() {
-  const filters = document.getElementById("desktopFilters"); filters.replaceChildren(filterControls());
+  const filters = document.getElementById("desktopFilters"); filters.replaceChildren(filterControls("desktop"));
   if (drawerMode === "filters" && document.getElementById("drawer").open) renderMobileFilters();
   const visible = manifest.captures.filter(matches), list = document.getElementById("captureList"); list.replaceChildren();
-  document.getElementById("filterSummary").textContent = visible.length===manifest.captures.length ? "Showing all "+manifest.captures.length+" screenshots" : "Showing "+visible.length+" of "+manifest.captures.length+" screenshots";
+  // The summary counts pages (and scenario states), never the size variants of one page.
+  const shownScreens = screenCount(visible), totalScreens = screenCount(manifest.captures);
+  document.getElementById("filterSummary").textContent = shownScreens===totalScreens ? "Showing all "+totalScreens+" "+screenUnit(totalScreens) : "Showing "+shownScreens+" of "+totalScreens+" "+screenUnit(totalScreens);
   const high=manifest.issues.filter(function(issue){return confidenceFor(issue)==="high";}).length,confirmation=manifest.issues.filter(function(issue){return confidenceFor(issue)==="needs-confirmation";}).length,noise=manifest.issues.filter(function(issue){return confidenceFor(issue)==="likely-noise";}).length;
-  document.getElementById("resultsSummary").textContent = manifest.issues.length+" "+(manifest.issues.length===1?"issue":"issues")+": "+high+" likely "+(high===1?"defect":"defects")+", "+confirmation+" to confirm, "+noise+" likely noise. "+visible.length+" "+(visible.length===1?"screenshot":"screenshots")+" match your filters.";
+  document.getElementById("resultsSummary").textContent = manifest.issues.length+" "+(manifest.issues.length===1?"issue":"issues")+": "+high+" likely "+(high===1?"defect":"defects")+", "+confirmation+" to confirm, "+noise+" likely noise. "+shownScreens+" "+screenUnit(shownScreens)+(shownScreens===1?" matches":" match")+" your filters.";
   if (visible.length && scenarioEnabled) manifest.states.forEach(function(state,index){const captures=visible.filter(function(capture){return capture.state_id===state.id;});if(!captures.length)return;const headingId="scenario-group-"+index,section=node("section",{class:"scenario-group","aria-labelledby":headingId},[node("h2",{class:"scenario-group-title",id:headingId,text:state.label})]);captures.forEach(function(capture){section.appendChild(captureCard(capture,true));});list.appendChild(section);});
   else if (visible.length) visible.forEach(function(capture){list.appendChild(captureCard(capture,false));});
   else list.appendChild(node("section",{class:"empty"},[node("h2",{text:"No screenshots match these filters"}),node("p",{text:"Change a filter or show all screenshots."}),node("button",{text:"Show All Screenshots",onclick:clearFilters})]));
@@ -469,7 +494,7 @@ function openSettings(trigger) {
 }
 async function stopLocalService(){try{await postJson("api/stop",{});document.body.replaceChildren(node("main",{},[node("h1",{text:"Viewport QA stopped"}),node("p",{text:"You can close this tab."})]));}catch(error){appendError("Could not stop Viewport QA. "+error.message,false);}}
 async function saveSettingsAndClose() { const input=document.getElementById("defaultHandoffPath");try{settings=await postJson("api/settings",{defaultHandoffPath:input.value});closeDrawer();announce("Settings saved");}catch(error){appendError("Could not save settings. "+error.message,false);input.focus();announce("Could not save settings");} }
-function renderMobileFilters(){const body=document.getElementById("drawerBody");body.replaceChildren(filterControls());body.appendChild(node("button",{class:"clear",text:"Show All Screenshots",onclick:function(){clearFilters();closeDrawer();}}));}
+function renderMobileFilters(){const body=document.getElementById("drawerBody");body.replaceChildren(filterControls("drawer"));body.appendChild(node("button",{class:"clear",text:"Show All Screenshots",onclick:function(){clearFilters();closeDrawer();}}));}
 function openMobileFilters(trigger){openDrawer("Filter screenshots","filters",trigger);renderMobileFilters();document.getElementById("drawerActions").appendChild(node("button",{class:"primary",text:"Show Screenshots",onclick:closeDrawer}));}
 
 document.getElementById("closeDrawer").addEventListener("click",closeDrawer);
