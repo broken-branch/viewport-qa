@@ -10,6 +10,7 @@ import {
   browserStatus,
   installBrowser,
   isLinkFreeExistingPath,
+  normalizeTargetAddress,
   parseViewportList,
   scan,
   type BrowserMutationResult,
@@ -446,8 +447,9 @@ export async function launchStudio(options: LauncherOptions = {}): Promise<{ ser
       let target: string; let localTemporary: string | undefined; const allowedOrigins = new Set<string>();
       if (body.kind === "url") {
         if (typeof body.url !== "string") { jsonResponse(response, 400, { error: "enter a web address" }); return; }
-        let parsed: URL; try { parsed = new URL(body.url); } catch { jsonResponse(response, 400, { error: "enter a complete http:// or https:// address" }); return; }
-        if (!/^https?:$/u.test(parsed.protocol) || parsed.username || parsed.password) { jsonResponse(response, 400, { error: "only credential-free HTTP(S) addresses can be scanned" }); return; }
+        const address = normalizeTargetAddress(body.url);
+        let parsed: URL; try { parsed = new URL(address ?? ""); } catch { jsonResponse(response, 400, { error: "enter a web address such as example.com or https://example.com/page" }); return; }
+        if (!/^https?:$/u.test(parsed.protocol) || parsed.username || parsed.password) { jsonResponse(response, 400, { error: "only credential-free HTTP(S) addresses can be scanned; use the local file option for a page on disk" }); return; }
         target = parsed.href; allowedOrigins.add(parsed.origin);
       } else if (body.kind === "file") {
         if (!body.localFile || typeof body.localFile.name !== "string" || typeof body.localFile.content !== "string" || ![".html", ".htm"].includes(extname(body.localFile.name).toLowerCase()) || Buffer.byteLength(body.localFile.content) > MAX_LOCAL_FILE_BYTES) { jsonResponse(response, 400, { error: "choose a self-contained UTF-8 HTML file no larger than 8 MB" }); return; }

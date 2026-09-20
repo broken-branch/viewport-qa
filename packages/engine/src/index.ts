@@ -51,6 +51,7 @@ export { validateCompletedReport } from "./report-transaction.js";
 export { acquireReportWriterLock } from "./report-lock.js";
 export type { ReportWriterLockHooks, ReportWriterLockOptions } from "./report-lock.js";
 export { createTargetPolicy } from "./target-policy.js";
+export { normalizeTargetAddress } from "./target-address.js";
 export type { TargetPolicy, TargetPolicyOptions } from "./target-policy.js";
 export { isLinkFreeExistingPath } from "./path-safety.js";
 export {

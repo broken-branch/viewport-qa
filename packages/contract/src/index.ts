@@ -40,6 +40,12 @@ export interface ElementMetric {
   /** Deterministic element identity that is stable across viewport captures. */
   elementFingerprint: string;
   rect: Rect;
+  /**
+   * `rect` intersected with the clip box of every ancestor whose overflow is
+   * not visible. A zero-size rectangle means nothing of the element can be
+   * seen at once (fully clipped, or beyond a scroll container's box).
+   */
+  visibleRect: Rect;
   clientWidth: number;
   clientHeight: number;
   scrollWidth: number;
@@ -57,6 +63,8 @@ export interface ElementMetric {
    */
   visible: boolean;
   interactive: boolean;
+  /** An <a> whose href targets a fragment of the current page (skip link, table of contents). */
+  inPageLink: boolean;
   /**
    * Matches the standard visually-hidden/sr-only signature: ~1px box clamped
    * via clip/clip-path/hidden overflow. Intentional a11y pattern, never a

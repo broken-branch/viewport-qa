@@ -34,6 +34,7 @@ function el(overrides: Partial<ElementMetric>): ElementMetric {
     semanticName: "synthetic content",
     elementFingerprint: overrides.selector ?? `synthetic:${counter}`,
     rect: { x: 0, y: 0, width: 100, height: 20 },
+    visibleRect: overrides.rect ?? { x: 0, y: 0, width: 100, height: 20 },
     clientWidth: 100,
     clientHeight: 20,
     scrollWidth: 100,
@@ -45,6 +46,7 @@ function el(overrides: Partial<ElementMetric>): ElementMetric {
     overflowY: "visible",
     visible: true,
     interactive: false,
+    inPageLink: false,
     srOnly: false,
     hasScrollableAncestor: false,
     stretchedTarget: -1,
@@ -263,13 +265,14 @@ describe("detectOverlap", () => {
 
 describe("detectWrapping", () => {
   it("flags one-word-per-line columns", () => {
-    // 8 words over ~8 lines (height 192 / lineHeight 24).
+    // 8 words rendered as 8 line boxes in a 44px column.
     const issues = detectWrapping(
       snap([
         el({
           selector: "div#col",
           wordCount: 8,
           rect: { x: 0, y: 0, width: 44, height: 192 },
+          textRects: Array.from({ length: 8 }, (_, line) => ({ x: 0, y: line * 24, width: 40, height: 24 })),
         }),
       ]),
     );
@@ -312,23 +315,34 @@ describe("detectWrapping", () => {
 });
 
 describe("detectCrampedSpacing", () => {
-  it("flags stacked text siblings with < 2px gap", () => {
+  it("flags stacked text siblings whose glyphs touch", () => {
+    // line-height equals font size, so a zero-margin stack has no leading.
     const parent = el({ index: 0, hasDirectText: false, selector: "div#wrap" });
     const first = el({
       index: 1,
       parent: 0,
       selector: "p#one",
-      rect: { x: 0, y: 0, width: 300, height: 24 },
+      rect: { x: 0, y: 0, width: 300, height: 16 },
+      lineHeightPx: 16,
     });
     const second = el({
       index: 2,
       parent: 0,
       selector: "p#two",
-      rect: { x: 0, y: 24, width: 300, height: 24 },
+      rect: { x: 0, y: 16, width: 300, height: 16 },
+      lineHeightPx: 16,
     });
     const issues = detectCrampedSpacing(snap([parent, first, second]));
     expect(issues).toHaveLength(1);
     expect(issues[0]!.type).toBe("cramped-spacing");
+  });
+
+  it("accepts a zero-margin stack whose line-height leaves air between lines", () => {
+    // 16px text at line-height 24 keeps ~4px of leading on each side.
+    const parent = el({ index: 0, hasDirectText: false, selector: "div#card" });
+    const title = el({ index: 1, parent: 0, selector: "p#title", rect: { x: 0, y: 0, width: 300, height: 24 } });
+    const subtitle = el({ index: 2, parent: 0, selector: "p#subtitle", rect: { x: 0, y: 24, width: 300, height: 24 } });
+    expect(detectCrampedSpacing(snap([parent, title, subtitle]))).toHaveLength(0);
   });
 
   it("accepts siblings with normal spacing", () => {

@@ -330,6 +330,16 @@ export function collectSnapshot(maxElements: number): Snapshot {
   }
 
   const SCROLLABLE_OVERFLOW = new Set(["auto", "scroll", "overlay"]);
+  type Rect = Snapshot["elements"][number]["rect"];
+  function intersectRects(a: Rect, b: Rect): Rect {
+    const x = Math.max(a.x, b.x);
+    const y = Math.max(a.y, b.y);
+    const right = Math.min(a.x + a.width, b.x + b.width);
+    const bottom = Math.min(a.y + a.height, b.y + b.height);
+    return right > x && bottom > y
+      ? { x, y, width: right - x, height: bottom - y }
+      : { x, y, width: 0, height: 0 };
+  }
 
   const all = doc.querySelectorAll("*");
   const elements: Snapshot["elements"] = [];
@@ -340,6 +350,7 @@ export function collectSnapshot(maxElements: number): Snapshot {
   const treeHidden: boolean[] = [];
   const treeStyleHidden: boolean[] = [];
   const treeScrollable: boolean[] = [];
+  const treeClip: (Rect | null)[] = [];
   const treeOwnOpacity: number[] = [];
   const treeOwnBackground: Snapshot["elements"][number]["effectiveBackgroundColor"][] =
     [];
@@ -512,6 +523,14 @@ export function collectSnapshot(maxElements: number): Snapshot {
       (parentIndex >= 0 && treeScrollable[parentIndex]!) || parentIsScroller;
     treeScrollable.push(hasScrollableAncestor);
 
+    // Visible box: the border box clipped by every ancestor whose overflow is
+    // not visible. Ancestors' clips accumulate down the tree, so each element
+    // only intersects with its parent's accumulated clip.
+    const inheritedClip = parentIndex >= 0 ? treeClip[parentIndex]! : null;
+    const visibleRect = inheritedClip ? intersectRects(pageRect, inheritedClip) : pageRect;
+    const clipsChildren = style.overflowX !== "visible" || style.overflowY !== "visible";
+    treeClip.push(clipsChildren ? visibleRect : inheritedClip);
+
     // Nearest positioned ancestor (for the stretched-link heuristic).
     const nearestPositioned =
       parentIndex >= 0
@@ -589,7 +608,10 @@ export function collectSnapshot(maxElements: number): Snapshot {
       declaredFontFamilies.has(requestedFontFamily.toLowerCase()) &&
       hasDirectText
     ) {
-      const fontShorthand = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+      // Check only the requested family. Checking the whole stack fails
+      // whenever a later declared family (for example a metric-matched
+      // "X Fallback" face) is not loaded, even though the requested font is.
+      const fontShorthand = `${style.fontStyle} ${style.fontWeight} ${style.fontSize} ${JSON.stringify(requestedFontFamily)}`;
       fontFaceStatus = doc.fonts.check(fontShorthand, directText)
         ? "loaded"
         : "missing";
@@ -603,6 +625,7 @@ export function collectSnapshot(maxElements: number): Snapshot {
       semanticName: semantic.name,
       elementFingerprint: semantic.fingerprint,
       rect: pageRect,
+      visibleRect,
       clientWidth: element.clientWidth,
       clientHeight: element.clientHeight,
       scrollWidth: element.scrollWidth,
@@ -614,6 +637,7 @@ export function collectSnapshot(maxElements: number): Snapshot {
       overflowY: style.overflowY,
       visible,
       interactive,
+      inPageLink: tag === "a" && (element.getAttribute("href") ?? "").startsWith("#"),
       srOnly,
       hasScrollableAncestor,
       stretchedTarget,

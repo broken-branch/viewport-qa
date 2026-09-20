@@ -4,13 +4,14 @@ import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
+  buildAgentSummary,
   DEFAULT_MAX_DEPTH,
   DEFAULT_MAX_PAGES,
+  formatAgentSummaryHuman,
   HARD_MAX_DEPTH,
   HARD_MAX_PAGES,
-  buildAgentSummary,
-  formatAgentSummaryHuman,
   markRunAsBaseline,
+  normalizeTargetAddress,
   parseViewportList,
   prepareScenarios,
   readAgentSummary,
@@ -143,7 +144,12 @@ function targetToUrl(target: string): string {
     return target;
   const asPath = resolve(target);
   if (existsSync(asPath)) return pathToFileURL(asPath).href;
-  throw new Error(`Target "${target}" is neither a URL nor an existing file`);
+  const address = normalizeTargetAddress(target);
+  if (address && /^https?:/iu.test(address)) return address;
+  throw new Error(
+    `Target "${target}" is neither an existing file nor a web address. ` +
+    "Give a URL such as https://example.com/page (the https:// part is optional), or a path to a local HTML file.",
+  );
 }
 
 async function runScan(argv: string[]): Promise<number> {

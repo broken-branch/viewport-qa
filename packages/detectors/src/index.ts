@@ -153,6 +153,13 @@ export const detectElementOverflow: Detector = ({ elements }) => {
 // overlap: two content-bearing elements whose boxes intersect
 // ---------------------------------------------------------------------------
 
+function rectsIntersect(a: Rect, b: Rect): boolean {
+  return (
+    a.x < b.x + b.width && b.x < a.x + a.width &&
+    a.y < b.y + b.height && b.y < a.y + a.height
+  );
+}
+
 const OVERLAP_MIN_DIM = 8;
 const OVERLAP_MIN_AREA = 100;
 const OVERLAP_CANDIDATE_CAP = 1500;
@@ -201,13 +208,16 @@ export const detectOverlap: Detector = ({ elements }) => {
         stretchedLinkCovers(elements, b, a)
       )
         continue;
-      const left = Math.max(a.rect.x, b.rect.x);
-      const right = Math.min(a.rect.x + a.rect.width, b.rect.x + b.rect.width);
-      const top = Math.max(a.rect.y, b.rect.y);
-      const bottom = Math.min(
-        a.rect.y + a.rect.height,
-        b.rect.y + b.rect.height,
-      );
+      // Cheap pass on raw boxes; a pair that does not even touch there is
+      // done. Pairs that do are judged on what is actually painted: the boxes
+      // clipped by ancestor overflow (image wrappers, carousels, scrollers).
+      if (!rectsIntersect(a.rect, b.rect)) continue;
+      const av = a.visibleRect;
+      const bv = b.visibleRect;
+      const left = Math.max(av.x, bv.x);
+      const right = Math.min(av.x + av.width, bv.x + bv.width);
+      const top = Math.max(av.y, bv.y);
+      const bottom = Math.min(av.y + av.height, bv.y + bv.height);
       const width = right - left;
       const height = bottom - top;
       if (width < OVERLAP_MIN_DIM || height < OVERLAP_MIN_DIM) continue;
@@ -215,10 +225,7 @@ export const detectOverlap: Detector = ({ elements }) => {
       // Severity calibration: one box sitting almost entirely inside/over the
       // other is usually an intentional overlay/badge -> medium; a partial
       // collision of two content boxes is the genuinely broken case -> high.
-      const smallerArea = Math.min(
-        a.rect.width * a.rect.height,
-        b.rect.width * b.rect.height,
-      );
+      const smallerArea = Math.min(av.width * av.height, bv.width * bv.height);
       const contained =
         smallerArea > 0 &&
         width * height >= smallerArea * OVERLAP_CONTAINMENT_RATIO;
@@ -246,14 +253,10 @@ export const detectOverlap: Detector = ({ elements }) => {
             ? `one sits almost entirely over the other (possibly an intentional overlay -- verify visually).`
             : `neither is an ancestor of the other, so they likely collide unintentionally.`),
         rect: round({
-          x: Math.min(a.rect.x, b.rect.x),
-          y: Math.min(a.rect.y, b.rect.y),
-          width:
-            Math.max(a.rect.x + a.rect.width, b.rect.x + b.rect.width) -
-            Math.min(a.rect.x, b.rect.x),
-          height:
-            Math.max(a.rect.y + a.rect.height, b.rect.y + b.rect.height) -
-            Math.min(a.rect.y, b.rect.y),
+          x: Math.min(av.x, bv.x),
+          y: Math.min(av.y, bv.y),
+          width: Math.max(av.x + av.width, bv.x + bv.width) - Math.min(av.x, bv.x),
+          height: Math.max(av.y + av.height, bv.y + bv.height) - Math.min(av.y, bv.y),
         }),
         heuristicSuggestion: heuristic(
           "Check absolute/negative-margin positioning and fixed sizes at this viewport; give the elements flow layout (flex/grid with gap) or enough room so their boxes no longer intersect.",
@@ -268,12 +271,31 @@ export const detectOverlap: Detector = ({ elements }) => {
 // wrapping: one-word-per-line columns and forced mid-word breaks
 // ---------------------------------------------------------------------------
 
+/**
+ * Number of rendered text lines. Each text-line box is one row; boxes on the
+ * same row (bidi runs, inline children) share a vertical band. Falls back to a
+ * box-height estimate when no line boxes were recorded.
+ */
+function textLineCount(element: ElementMetric): number {
+  if (element.textRects.length === 0) {
+    return element.lineHeightPx > 0 ? Math.round(element.rect.height / element.lineHeightPx) : 0;
+  }
+  const rows = [...element.textRects].sort((a, b) => a.y - b.y);
+  let count = 0;
+  let rowBottom = -Infinity;
+  for (const rect of rows) {
+    if (rect.y >= rowBottom - rect.height / 2) count += 1;
+    rowBottom = Math.max(rowBottom, rect.y + rect.height);
+  }
+  return count;
+}
+
 export const detectWrapping: Detector = ({ elements }) => {
   const issues: DetectedIssue[] = [];
   for (const element of elements) {
     if (!element.visible || !element.hasDirectText) continue;
     if (element.lineHeightPx <= 0) continue;
-    const lineCount = Math.round(element.rect.height / element.lineHeightPx);
+    const lineCount = textLineCount(element);
 
     // One-word-per-line column.
     if (
@@ -328,6 +350,10 @@ export const detectWrapping: Detector = ({ elements }) => {
 // ---------------------------------------------------------------------------
 
 const CRAMPED_MAX_GAP = 2;
+/** Half the vertical leading of an element's text lines: the visible air above or below its glyphs. */
+function halfLeading(element: ElementMetric): number {
+  return Math.max(0, element.lineHeightPx - element.fontSizePx) / 2;
+}
 
 export const detectCrampedSpacing: Detector = ({ elements }) => {
   const issues: DetectedIssue[] = [];
@@ -337,7 +363,10 @@ export const detectCrampedSpacing: Detector = ({ elements }) => {
       (child) =>
         child.visible &&
         (child.hasDirectText || child.interactive) &&
-        child.position !== "fixed",
+        child.position !== "fixed" &&
+        // Inline runs (spans in a paragraph) wrap onto consecutive lines;
+        // the "gap" between them is line spacing, not block layout.
+        child.display !== "inline",
     );
     for (let i = 0; i < content.length; i++) {
       for (let j = i + 1; j < content.length; j++) {
@@ -350,7 +379,13 @@ export const detectCrampedSpacing: Detector = ({ elements }) => {
         const verticalOverlap =
           Math.min(a.rect.y + a.rect.height, b.rect.y + b.rect.height) -
           Math.max(a.rect.y, b.rect.y);
-        const verticalGap = b.rect.y - (a.rect.y + a.rect.height);
+        // Stacked text is judged by the air between glyphs, not boxes: the
+        // leading that line-height adds around each line separates a
+        // zero-margin title from its subtitle; text at line-height 1 does not.
+        const boxGap = b.rect.y - (a.rect.y + a.rect.height);
+        const verticalGap = a.hasDirectText && b.hasDirectText
+          ? boxGap + halfLeading(a) + halfLeading(b)
+          : boxGap;
         const horizontalGap = b.rect.x - (a.rect.x + a.rect.width);
         const stackedTight =
           horizontalOverlap > Math.min(a.rect.width, b.rect.width) * 0.5 &&
@@ -529,6 +564,9 @@ export const detectOffscreenInteractive: Detector = ({ page, elements }) => {
             x >= page.scrollWidth - 1 ||
             y >= page.scrollHeight - 1);
     if (!unreachable) continue;
+    // A same-page link parked above or left of the page is the standard
+    // skip-link pattern (revealed on focus), not a control users lost.
+    if (element.inPageLink && (bottom <= 0 || right <= 0)) continue;
     issues.push({
       type: "offscreen-interactive",
       severity: "high",
@@ -626,6 +664,10 @@ export const detectContrast: Detector = ({ elements }) => {
 
 export const detectFontRendering: Detector = ({ elements }) => {
   const issues: DetectedIssue[] = [];
+  // A font that fails to load fails for every element that requests it. One
+  // finding per family, anchored on its first affected element, says that
+  // once instead of once per paragraph.
+  const missingFamilies = new Map<string, ElementMetric[]>();
   for (const element of elements) {
     if (
       !element.hasDirectText ||
@@ -650,18 +692,9 @@ export const detectFontRendering: Detector = ({ elements }) => {
       continue;
     }
     if (element.fontFaceStatus === "missing") {
-      issues.push({
-        type: "font-rendering",
-        severity: "medium",
-        selector: element.selector,
-        description:
-          `Requested font family "${element.requestedFontFamily}" from computed stack ` +
-          `"${element.fontFamily}" failed to load; the rendered text is using a fallback face.`,
-        rect: round(element.rect),
-        heuristicSuggestion: heuristic(
-          "Fix the @font-face source/CORS path or remove the unavailable family, and keep an intentional fallback stack with compatible metrics.",
-        ),
-      });
+      const affected = missingFamilies.get(element.requestedFontFamily) ?? [];
+      affected.push(element);
+      missingFamilies.set(element.requestedFontFamily, affected);
       continue;
     }
     const horizontalOverflow =
@@ -687,6 +720,23 @@ export const detectFontRendering: Detector = ({ elements }) => {
       rect: round(element.rect),
       heuristicSuggestion: heuristic(
         "Let the text container grow or wrap, or use deliberate truncation; verify the loaded font and line-height do not exceed fixed box dimensions.",
+      ),
+    });
+  }
+  for (const [family, affected] of missingFamilies) {
+    const first = affected[0]!;
+    const others = affected.length - 1;
+    issues.push({
+      type: "font-rendering",
+      severity: "medium",
+      selector: first.selector,
+      description:
+        `Font "${family}" failed to load, so text renders in a fallback face from the stack ` +
+        `"${first.fontFamily}". First affected: ${first.selector}` +
+        (others > 0 ? `; ${others} other text element${others === 1 ? "" : "s"} on this page use the same font.` : "."),
+      rect: round(first.rect),
+      heuristicSuggestion: heuristic(
+        "Fix the @font-face source/CORS path or remove the unavailable family, and keep an intentional fallback stack with compatible metrics.",
       ),
     });
   }
