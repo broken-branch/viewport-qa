@@ -184,7 +184,7 @@ describe("restricted scan target policy", () => {
     }
   });
 
-  it("blocks cross-origin redirects and subresources unless each origin is explicitly admitted", async () => {
+  it("in strict mode blocks cross-origin redirects and subresources unless each origin is explicitly admitted", async () => {
     const outsideRequests: string[] = [];
     const outside = await listen((request, response) => { outsideRequests.push(request.url ?? ""); response.end("outside"); });
     const outsideServer = servers[0]!;
@@ -199,7 +199,7 @@ describe("restricted scan target policy", () => {
     const browser = await chromium.launch({ headless: true });
     try {
       const blockedContext = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
-      const blockedPolicy = await createTargetPolicy({ targetUrl: `${source}/` });
+      const blockedPolicy = await createTargetPolicy({ targetUrl: `${source}/`, strict: true });
       await blockedPolicy.install(blockedContext);
       await (await blockedContext.newPage()).goto(`${source}/`);
       const blockedPage = blockedContext.pages()[0]!;
@@ -217,7 +217,7 @@ describe("restricted scan target policy", () => {
       await allowedContext.close();
 
       const redirectContext = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
-      const redirectPolicy = await createTargetPolicy({ targetUrl: `${source}/redirect` });
+      const redirectPolicy = await createTargetPolicy({ targetUrl: `${source}/redirect`, strict: true });
       await redirectPolicy.install(redirectContext);
       const redirectPage = await redirectContext.newPage();
       await installRedirectGuard(redirectPage, redirectPolicy);
@@ -248,7 +248,69 @@ describe("restricted scan target policy", () => {
     } finally { await browser.close(); }
   });
 
-  it("aborts transactional publication when a subresource redirect is forbidden", async () => {
+  it("by default lets a page load from other origins and follow their redirects, as a browser would", async () => {
+    const outsideRequests: string[] = [];
+    const outside = await listen((request, response) => { outsideRequests.push(request.url ?? ""); response.setHeader("content-type", "text/html"); response.end("<p>landing</p>"); });
+    const source = await listen((request, response) => {
+      if (request.url === "/redirect") { response.writeHead(302, { location: `${outside}/landing` }); response.end(); return; }
+      response.setHeader("content-type", "text/html");
+      response.end(`<img src="${outside}/pixel.png"><a href="mailto:x@example.test">mail</a><script>fetch("chrome-extension://invalid/probe").catch(function(){});</script><p>source</p>`);
+    });
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
+      const policy = await createTargetPolicy({ targetUrl: `${source}/` });
+      expect(policy.strict).toBe(false);
+      await policy.install(context);
+      const page = await context.newPage();
+      await installRedirectGuard(page, policy);
+      await page.goto(`${source}/`);
+      await expect.poll(() => outsideRequests).toContain("/pixel.png");
+      // An extension probe is dropped quietly, not counted against the page.
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+      expect(() => policy.assertNoViolations()).not.toThrow();
+      await page.goto(`${source}/redirect`);
+      expect(page.url()).toBe(`${outside}/landing`);
+      expect(() => policy.assertNoViolations()).not.toThrow();
+      await context.close();
+    } finally { await browser.close(); }
+  });
+
+  it("keeps a confined top-level navigation on the target origin without contacting the other site", async () => {
+    const outsideRequests: string[] = [];
+    const outside = await listen((request, response) => { outsideRequests.push(request.url ?? ""); response.end("outside"); });
+    const source = await listen((request, response) => {
+      if (request.url === "/redirect") { response.writeHead(302, { location: `${outside}/landing` }); response.end(); return; }
+      if (request.url === "/hop") { response.setHeader("content-type", "text/html"); response.end(`<script>location.href=${JSON.stringify(`${outside}/hopped`)}</script>`); return; }
+      response.setHeader("content-type", "text/html");
+      response.end(`<img src="${outside}/pixel.png"><p>source</p>`);
+    });
+    const browser = await chromium.launch({ headless: true });
+    try {
+      for (const path of ["/redirect", "/hop"]) {
+        const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
+        const policy = await createTargetPolicy({ targetUrl: `${source}/`, confineNavigation: true });
+        await policy.install(context);
+        const page = await context.newPage();
+        await installRedirectGuard(page, policy);
+        await page.goto(`${source}${path}`).catch(() => {});
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 200));
+        expect(outsideRequests.filter((url) => url !== "/pixel.png")).toEqual([]);
+        expect(() => policy.assertNoViolations()).toThrow(/left the crawl origin/u);
+        await context.close();
+      }
+      // Subresources from other origins are still fine while confined.
+      const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: false });
+      const policy = await createTargetPolicy({ targetUrl: `${source}/`, confineNavigation: true });
+      await policy.install(context);
+      await (await context.newPage()).goto(`${source}/`);
+      await expect.poll(() => outsideRequests).toContain("/pixel.png");
+      expect(() => policy.assertNoViolations()).not.toThrow();
+      await context.close();
+    } finally { await browser.close(); }
+  });
+
+  it("in strict mode aborts transactional publication when a subresource redirect is forbidden", async () => {
     const outsideRequests: string[] = [];
     const outside = await listen((request, response) => { outsideRequests.push(request.url ?? ""); response.end("pixel"); });
     const source = await listen((request, response) => {
@@ -260,7 +322,7 @@ describe("restricted scan target policy", () => {
     const outDir = join(parent, "report");
     try {
       await expect(scan({
-        url: `${source}/`, outDir,
+        url: `${source}/`, outDir, strict: true,
         viewports: [{ width: 320, height: 240, deviceScaleFactor: 1, label: "320x240@1" }],
       })).rejects.toThrow(/restricted target policy blocked the scan.*redirect/iu);
       expect(outsideRequests).toEqual([]);
@@ -414,7 +476,7 @@ describe("restricted scan target policy", () => {
     30_000,
   );
 
-  it("fails the whole transactional scan when a subresource origin is not admitted", async () => {
+  it("in strict mode fails the whole transactional scan when a subresource origin is not admitted", async () => {
     const outside = await listen((_request, response) => response.end("pixel"));
     const source = await listen((_request, response) => {
       response.setHeader("content-type", "text/html");
@@ -424,7 +486,7 @@ describe("restricted scan target policy", () => {
     const outDir = join(parent, "report");
     try {
       await expect(scan({
-        url: `${source}/`, outDir,
+        url: `${source}/`, outDir, strict: true,
         viewports: [{ width: 320, height: 240, deviceScaleFactor: 1, label: "320x240@1" }],
       })).rejects.toThrow(/restricted target policy blocked the scan/u);
       expect(existsSync(outDir)).toBe(false);

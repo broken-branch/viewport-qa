@@ -149,17 +149,16 @@ describe("Linux no-terminal launcher controller", () => {
     expect(readdirSync(join(root, "cache"))).toHaveLength(0);
   }, 30_000);
 
-  it("requires exact per-job approval for a newly discovered origin, then retries successfully", async () => {
-    const asset = await listen((_request, response) => { response.writeHead(200, { "content-type": "image/svg+xml" }); response.end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'); });
+  it("scans a page whose assets come from another origin without asking for anything", async () => {
+    const assetRequests: string[] = [];
+    const asset = await listen((request, response) => { assetRequests.push(request.url ?? ""); response.writeHead(200, { "content-type": "image/svg+xml" }); response.end('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>'); });
     const page = await listen((_request, response) => { response.writeHead(200, { "content-type": "text/html" }); response.end(`<!doctype html><img src="${asset.origin}/pixel.svg"><h1>Dependency</h1>`); });
     const { call } = await setup();
     await call("/api/scan", { method: "POST", body: JSON.stringify({ kind: "url", url: `${page.origin}/`, viewports: ["390x844"] }) });
-    const approval = await waitFor(call, "approval-required"); expect(approval.requiredOrigins).toEqual([asset.origin]);
-    const wrong = await call("/api/approve-origins", { method: "POST", body: JSON.stringify({ origins: ["https://not-approved.test"] }) }); expect(wrong.status).toBe(400);
-    const retry = await call("/api/approve-origins", { method: "POST", body: JSON.stringify({ origins: approval.requiredOrigins }) }); expect(retry.status).toBe(202);
-    await waitFor(call, "complete");
-    await call("/api/scan", { method: "POST", body: JSON.stringify({ kind: "url", url: `${page.origin}/again`, viewports: ["390x844"] }) });
-    expect((await waitFor(call, "approval-required")).requiredOrigins).toEqual([asset.origin]);
+    const done = await waitFor(call, "complete");
+    expect(done.requiredOrigins).toBeUndefined();
+    expect(assetRequests).toContain("/pixel.svg");
+    expect((await call("/api/approve-origins", { method: "POST", body: "{}" })).status).not.toBe(202);
   }, 30_000);
 
   it("cancels transactionally and never trusts a forged recent-report index entry", async () => {
@@ -234,27 +233,29 @@ describe("Linux no-terminal launcher controller", () => {
     expect(settled).toBe(true);
   });
 
-  it("removes a staged local upload when approval is cancelled or the service stops", async () => {
+  it("removes a staged local upload after the scan completes, when it is cancelled, and when the service stops mid-scan", async () => {
     const dependency = await listen((_request, response) => { response.end("asset"); });
+    const hanging = await listen(() => {});
     const first = await setup();
-    const upload = { kind: "file", localFile: { name: "approval.html", content: `<!doctype html><img src="${dependency.origin}/asset">` }, viewports: ["390x844"] };
-    await first.call("/api/scan", { method: "POST", body: JSON.stringify(upload) }); await waitFor(first.call, "approval-required");
-    expect(readdirSync(join(first.root, "cache"))).toHaveLength(1);
-    expect((await first.call("/api/cancel", { method: "POST", body: "{}" })).status).toBe(200);
+    const upload = { kind: "file", localFile: { name: "upload.html", content: `<!doctype html><img src="${dependency.origin}/asset"><h1>Upload</h1>` }, viewports: ["390x844"] };
+    const stuck = { kind: "file", localFile: { name: "stuck.html", content: `<!doctype html><img src="${hanging.origin}/never"><h1>Stuck</h1>` }, viewports: ["390x844"] };
+    await first.call("/api/scan", { method: "POST", body: JSON.stringify(upload) }); await waitFor(first.call, "complete");
     expect(readdirSync(join(first.root, "cache"))).toHaveLength(0);
 
-    await first.call("/api/scan", { method: "POST", body: JSON.stringify(upload) }); await waitFor(first.call, "approval-required");
+    await first.call("/api/scan", { method: "POST", body: JSON.stringify(stuck) });
+    await new Promise((done) => setTimeout(done, 300));
+    expect(readdirSync(join(first.root, "cache"))).toHaveLength(1);
+    expect((await first.call("/api/cancel", { method: "POST", body: "{}" })).status).toBe(202);
+    await waitFor(first.call, "cancelled");
+    expect(readdirSync(join(first.root, "cache"))).toHaveLength(0);
+
+    await first.call("/api/scan", { method: "POST", body: JSON.stringify(stuck) });
+    await new Promise((done) => setTimeout(done, 300));
     expect(readdirSync(join(first.root, "cache"))).toHaveLength(1);
     await first.call("/api/stop", { method: "POST", body: "{}" });
-    const closeDeadline = Date.now() + 10_000; while (true) { try { await assertPortClosed(first.launch.href); break; } catch (error) { if (Date.now() >= closeDeadline) throw error; await new Promise((done) => setTimeout(done, 25)); } }
+    const closeDeadline = Date.now() + 10_000; while (true) { try { await assertPortClosed(first.launch.href); break; } catch (error) { if (Date.now() >= closeDeadline) throw error; await new Promise((done) => setTimeout(done, 100)); } }
     expect(readdirSync(join(first.root, "cache"))).toHaveLength(0);
-
-    const idle = await setup({ idleTimeoutMs: 1_000 });
-    await idle.call("/api/scan", { method: "POST", body: JSON.stringify(upload) }); await waitFor(idle.call, "approval-required");
-    expect(readdirSync(join(idle.root, "cache"))).toHaveLength(1);
-    const idleDeadline = Date.now() + 10_000; while (true) { try { await assertPortClosed(idle.launch.href); break; } catch (error) { if (Date.now() >= idleDeadline) throw error; await new Promise((done) => setTimeout(done, 25)); } }
-    expect(readdirSync(join(idle.root, "cache"))).toHaveLength(0);
-  }, 30_000);
+  }, 45_000);
 
   it("admits every advertised 8 MB UTF-8 file through the bounded JSON transport", async () => {
     const { call, root } = await setup();

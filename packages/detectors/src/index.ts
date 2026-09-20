@@ -112,19 +112,27 @@ export const detectElementOverflow: Detector = ({ elements }) => {
     if (element.scrollWidth <= element.clientWidth + OVERFLOW_PAINT_TOLERANCE) continue;
     const left = element.rect.x;
     const right = left + element.clientWidth;
+    // Only what is painted outside the box is a spill: a descendant clipped by
+    // this element or an ancestor (a carousel track, an overflow:hidden card)
+    // never reaches the viewer.
+    const clipLeft = element.clipRect ? element.clipRect.x : -Infinity;
+    const clipRight = element.clipRect ? element.clipRect.x + element.clipRect.width : Infinity;
     const descendants = elements.filter(
       (candidate) => candidate.visible && isAncestor(elements, element.index, candidate.index),
     );
     const paintedCulprit = descendants
       .filter((candidate) =>
-        candidate.rect.x < left - OVERFLOW_PAINT_TOLERANCE ||
-        candidate.rect.x + candidate.rect.width > right + OVERFLOW_PAINT_TOLERANCE,
+        candidate.visibleRect.width > 0 &&
+        (candidate.visibleRect.x < left - OVERFLOW_PAINT_TOLERANCE ||
+          candidate.visibleRect.x + candidate.visibleRect.width > right + OVERFLOW_PAINT_TOLERANCE),
       )
       .sort((a, b) =>
-        (b.rect.x + b.rect.width - right) - (a.rect.x + a.rect.width - right),
+        (b.visibleRect.x + b.visibleRect.width - right) - (a.visibleRect.x + a.visibleRect.width - right),
       )[0];
-    const directTextSpills = element.textRects.some(
-      (rect) => rect.x < left - 1 || rect.x + rect.width > right + 1,
+    const directTextSpills = element.overflowX === "visible" && element.textRects.some(
+      (rect) =>
+        Math.max(rect.x, clipLeft) < left - 1 ||
+        Math.min(rect.x + rect.width, clipRight) > right + 1,
     );
     if (!paintedCulprit && !directTextSpills) continue;
     const source = paintedCulprit ?? element;
@@ -208,6 +216,9 @@ export const detectOverlap: Detector = ({ elements }) => {
         stretchedLinkCovers(elements, b, a)
       )
         continue;
+      // A fixed layer (modal, cookie banner, sticky bar) sits over the page by
+      // design; only elements in the same layer can collide.
+      if (a.inFixedLayer !== b.inFixedLayer) continue;
       // Cheap pass on raw boxes; a pair that does not even touch there is
       // done. Pairs that do are judged on what is actually painted: the boxes
       // clipped by ancestor overflow (image wrappers, carousels, scrollers).

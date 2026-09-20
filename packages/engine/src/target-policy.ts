@@ -8,17 +8,40 @@ import { isLinkFreeExistingPath } from "./path-safety.js";
 
 export interface TargetPolicyOptions {
   targetUrl: string;
+  /** Origins admitted beyond the target. Listing any implies `strict`. */
   allowedOrigins?: readonly string[];
+  /**
+   * Only the target origin and `allowedOrigins` may be contacted. Off by
+   * default: a page may then load from any public origin, as it would in a
+   * browser, while private and reserved addresses stay blocked.
+   */
+  strict?: boolean;
+  /**
+   * Keep top-level navigation on the target origin: a redirect or scripted hop
+   * to another site fails before it is contacted. A crawl is same-origin by
+   * definition, so it sets this; a single-page scan follows redirects.
+   */
+  confineNavigation?: boolean;
 }
+
+/**
+ * A request the policy blocks without treating it as a scan failure: the page
+ * asked for something the scanning browser cannot serve anyway (an extension
+ * scheme, a mailto: link), so nothing about the page went unobserved.
+ */
+export class QuietBlock extends Error {}
 
 export interface TargetPolicy {
   readonly targetUrl: string;
+  readonly strict: boolean;
   readonly allowedOrigins: ReadonlySet<string>;
   /** Chromium resolver pins established before the browser process starts. */
   readonly chromiumArgs: readonly string[];
   /** Independent per-browser-context violation ledger. */
   fork(): TargetPolicy;
   assertUrl(rawUrl: string, kind: string): Promise<void>;
+  /** Throws when a confined top-level navigation would leave the target origin. */
+  assertNavigationOrigin(rawUrl: string, kind: string): void;
   recordViolation(message: string): void;
   waitForViolation(): Promise<void>;
   assertNoViolations(): void;
@@ -121,6 +144,10 @@ async function addresses(hostname: string): Promise<string[]> {
   return [...new Set(answers.map((answer) => answer.address))];
 }
 
+function isTopFrame(request: { frame(): { parentFrame(): unknown } }): boolean {
+  try { return request.frame().parentFrame() === null; } catch { return false; }
+}
+
 function socketOrigin(url: URL): string {
   return `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}`;
 }
@@ -128,6 +155,8 @@ function socketOrigin(url: URL): string {
 export async function createTargetPolicy(options: TargetPolicyOptions): Promise<TargetPolicy> {
   const target = new URL(options.targetUrl);
   const explicitOrigins = new Set((options.allowedOrigins ?? []).map(normalizedOrigin));
+  const strict = options.strict ?? explicitOrigins.size > 0;
+  const confineNavigation = options.confineNavigation ?? false;
   const allowedOrigins = new Set(explicitOrigins);
   let fileRoot: string | undefined;
   let targetNetworkClass: "file" | "loopback" | "public" = "file";
@@ -188,14 +217,28 @@ export async function createTargetPolicy(options: TargetPolicyOptions): Promise<
     }
     async function assertNetwork(url: URL, kind: string): Promise<void> {
       const origin = /^wss?:$/u.test(url.protocol) ? socketOrigin(url) : url.origin;
-      if (!allowedOrigins.has(origin)) throw new Error(`${kind} blocked outside the explicit origin allowlist: ${origin}`);
-      const resolved = await addresses(url.hostname);
+      if (strict && !allowedOrigins.has(origin)) throw new Error(`${kind} blocked outside the explicit origin allowlist: ${origin}`);
+      let resolved: string[];
+      try {
+        resolved = await addresses(url.hostname);
+      } catch (error) {
+        // A hostname that does not resolve cannot be contacted; the browser
+        // would fail it too. Only a strict scan treats that as a policy matter.
+        if (strict) throw error;
+        throw new QuietBlock(`${kind} to an unresolvable host: ${url.hostname}`);
+      }
       const addressClass = resolved.every(isLoopbackAddress) ? "loopback" : "public";
       const prior = observedClass.get(url.hostname);
       if (prior && prior !== addressClass) throw new Error(`${kind} blocked after DNS address-class change: ${url.hostname}`);
       observedClass.set(url.hostname, addressClass);
       if (addressClass === "loopback" && !resolved.every(isLoopbackAddress)) throw new Error(`${kind} blocked mixed loopback DNS answers`);
-      if (addressClass === "public" && resolved.some(isPrivateNetworkAddress)) throw new Error(`${kind} blocked private or reserved DNS answer`);
+      // A public page must not reach into the machine or network it is being
+      // scanned from. A loopback or local-file target is the user's own
+      // environment, so its page may talk to other local services.
+      if (targetNetworkClass === "public") {
+        if (addressClass === "loopback") throw new Error(`${kind} blocked loopback origin from a public target: ${origin}`);
+        if (resolved.some(isPrivateNetworkAddress)) throw new Error(`${kind} blocked private or reserved DNS answer: ${url.hostname}`);
+      }
     }
 
     async function assertUrl(rawUrl: string, kind: string): Promise<void> {
@@ -209,16 +252,30 @@ export async function createTargetPolicy(options: TargetPolicyOptions): Promise<
         if (!item.isFile() || item.isSymbolicLink() || !await isLinkFreeExistingPath(path)) throw new Error(`${kind} blocked a symlink or non-regular local file`);
         return;
       }
-      if (!/^https?:$|^wss?:$/u.test(url.protocol)) throw new Error(`${kind} blocked unsupported protocol: ${url.protocol}`);
+      if (!/^https?:$|^wss?:$/u.test(url.protocol)) throw new QuietBlock(`${kind} to an unsupported scheme: ${url.protocol}`);
       await assertNetwork(url, kind);
+    }
+    function noteBlock(error: unknown): void {
+      if (error instanceof QuietBlock) return;
+      recordViolation(error instanceof Error ? error.message : String(error));
+    }
+    /** Top-level navigation must stay on the target origin when confined. */
+    function assertNavigationOrigin(rawUrl: string, kind: string): void {
+      if (!confineNavigation) return;
+      const url = new URL(rawUrl);
+      if (/^https?:$/u.test(url.protocol) && url.origin !== target.origin) {
+        throw new Error(`${kind} blocked: navigation left the crawl origin for ${url.origin}`);
+      }
     }
 
     return {
       targetUrl: target.href,
+      strict,
       allowedOrigins,
       chromiumArgs,
       fork: makePolicy,
       assertUrl,
+      assertNavigationOrigin,
       recordViolation,
       waitForViolation(): Promise<void> { return violationSignal; },
       assertNoViolations(): void {
@@ -229,12 +286,16 @@ export async function createTargetPolicy(options: TargetPolicyOptions): Promise<
       },
       async install(context: BrowserContext): Promise<void> {
         await context.route("**/*", async (route, request) => {
-          try { await assertUrl(request.url(), `${request.resourceType()} request`); await route.continue(); }
-          catch (error) { recordViolation(error instanceof Error ? error.message : String(error)); await route.abort("blockedbyclient"); }
+          try {
+            if (request.isNavigationRequest() && isTopFrame(request)) assertNavigationOrigin(request.url(), "navigation");
+            await assertUrl(request.url(), `${request.resourceType()} request`);
+            await route.continue();
+          }
+          catch (error) { noteBlock(error); await route.abort("blockedbyclient"); }
         });
         await context.routeWebSocket("**/*", async (route) => {
           try { await assertUrl(route.url(), "WebSocket"); route.connectToServer(); }
-          catch (error) { recordViolation(error instanceof Error ? error.message : String(error)); route.close({ code: 1008, reason: "Blocked by Viewport QA target policy" }); }
+          catch (error) { noteBlock(error); route.close({ code: 1008, reason: "Blocked by Viewport QA target policy" }); }
         });
       },
     };
@@ -375,13 +436,19 @@ export async function installRedirectGuard(
   const pending = new Set<Promise<void>>();
   const expectedTeardownError = (error: unknown): boolean =>
     error instanceof Error && /Target page, context or browser has been closed|Session closed|Target closed|Connection closed|browser has disconnected/iu.test(error.message);
+  // The page cancelled the request (navigation, abort, timeout) before the
+  // guard answered. It never proceeded, so there is nothing to fail closed on.
+  const interceptionGone = (error: unknown): boolean =>
+    error instanceof Error && /Invalid InterceptionId/iu.test(error.message);
   const recordGuardFailure = (prefix: string, error: unknown): void => {
     if (teardown && expectedTeardownError(error)) return;
+    if (interceptionGone(error) || error instanceof QuietBlock) return;
     policy.recordViolation(`${prefix}: ${error instanceof Error ? error.message : String(error)}`);
   };
   const onPaused = (event: {
     requestId: string;
     request: { url: string };
+    resourceType?: string;
     responseStatusCode?: number;
     responseHeaders?: Array<{ name: string; value: string }>;
   }): void => {
@@ -390,7 +457,9 @@ export async function installRedirectGuard(
         const status = event.responseStatusCode ?? 0;
         const location = event.responseHeaders?.find((header) => header.name.toLowerCase() === "location")?.value;
         if (status >= 300 && status < 400 && location) {
-          await policy.assertUrl(new URL(location, event.request.url).href, "redirect");
+          const next = new URL(location, event.request.url).href;
+          if (event.resourceType === "Document") policy.assertNavigationOrigin(next, "redirect");
+          await policy.assertUrl(next, "redirect");
         }
         const disposition = event.responseHeaders?.find(
           (header) => header.name.toLowerCase() === "content-disposition",

@@ -36,7 +36,7 @@ const USAGE = `${PRODUCT_NAME} ${TOOL_VERSION}
 Usage:
   vqa doctor [--json]
   vqa browser status|install|repair|remove [--json]
-  vqa scan <url-or-file> [--viewports WxH[@DPR],...] [--out <dir>] [--timeout <ms>] [--baseline <report-dir>] [--scenarios <file>] [--crawl] [--max-pages <n>] [--max-depth <n>] [--allow-origin <origin>] [--model-cli codex|claude]
+  vqa scan <url-or-file> [--viewports WxH[@DPR],...] [--out <dir>] [--timeout <ms>] [--baseline <report-dir>] [--scenarios <file>] [--crawl] [--max-pages <n>] [--max-depth <n>] [--strict] [--allow-origin <origin>] [--model-cli codex|claude]
   vqa summarize <report-dir> [--json]
   vqa baseline <report-dir>
   vqa serve <report-dir> [--port <port>] [--read-only] [--idle-timeout <ms>]
@@ -67,9 +67,12 @@ Options:
   --crawl      Crawl same-origin links breadth-first (disabled by default)
   --max-pages  Crawl page limit (default: ${DEFAULT_MAX_PAGES}; hard cap: ${HARD_MAX_PAGES})
   --max-depth  Crawl link depth from the start page (default: ${DEFAULT_MAX_DEPTH}; hard cap: ${HARD_MAX_DEPTH})
-  --allow-origin  Exact public HTTP(S) origin allowed for navigation and resources.
-               Repeat for required redirect/CDN origins. Local files and
-               loopback need no flag; every other origin fails closed.
+  --strict     Contact only the target origin (plus any --allow-origin). By
+               default a page may load from any public origin, as in a browser;
+               private and loopback addresses, downloads, and popups are always
+               blocked for a public target.
+  --allow-origin  Exact HTTP(S) origin to admit in strict mode. Repeat as needed;
+               listing any origin implies --strict.
   --model-cli  Opt in to AI fixes through an already subscription-authenticated
                local CLI: codex or claude (also VQA_MODEL_CLI)
   --model-cli-bin  Executable name/path override (also VQA_MODEL_CLI_BIN)
@@ -169,6 +172,7 @@ async function runScan(argv: string[]): Promise<number> {
       "model-cli-bin": { type: "string" },
       "model-cli-timeout": { type: "string" },
       "allow-origin": { type: "string", multiple: true },
+      strict: { type: "boolean" },
     },
   });
   const target = positionals[0];
@@ -257,6 +261,7 @@ async function runScan(argv: string[]): Promise<number> {
       maxPages,
       maxDepth,
       allowedOrigins: values["allow-origin"] ?? [],
+      ...(values.strict ? { strict: true } : {}),
       ...(scenarios ? { scenarios } : {}),
       signal: controller.signal,
       ...(adapter ? { adapter } : {}),

@@ -22,9 +22,9 @@ Set `VQA_BROWSER_CACHE` to an absolute writable local path. Do not point it at a
 
 Choose a new path or move the existing report yourself. Viewport QA intentionally has no overwrite flag. Failed scans clean their staging directory and never leave partial output that looks complete.
 
-## A resource origin is blocked
+## A request was blocked
 
-The origin you name in the URL is admitted automatically; local files and loopback need nothing. If the page redirects to, or loads resources from, another origin, the scan stops and names it. Rerun with `--allow-origin https://that-origin` for each one you trust; repeat the flag as needed. Do not add broad guesses. Targets that resolve to private or reserved addresses remain blocked even when listed.
+By default only requests from a public page to loopback, private, or reserved addresses are blocked, along with downloads, popups, and service workers; the scan reports a blocked request as a failure only in those cases. In `--strict` mode every origin beyond the target must be listed with `--allow-origin`; the failure names the origin. A site that rate-limits or challenges automated browsers (HTTP 429, "press and hold" pages) shows up as failed requests and a capture of the challenge page rather than the site; wait and retry, or scan a staging copy.
 
 ## The server port is busy
 

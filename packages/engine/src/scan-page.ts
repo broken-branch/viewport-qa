@@ -127,6 +127,9 @@ async function scanViewport(
     deviceScaleFactor: viewport.deviceScaleFactor,
     acceptDownloads: false,
     serviceWorkers: "block",
+    // A capture is one moment; ask the page for its settled state rather than
+    // a frame of its entrance animation.
+    reducedMotion: "reduce",
   });
   let page: Page | undefined;
   const offOriginNavigations: string[] = [];
@@ -200,6 +203,7 @@ async function scanViewport(
       ]);
     });
     await options.targetPolicy.assertUrl(page.url(), "client navigation");
+    await settleForCapture(page, viewport.height);
     // Give immediate and timer-triggered download events a bounded chance to
     // surface before committing the transactional report. Arbitrarily late
     // page activity cannot be observed after the isolated context is closed.
@@ -393,6 +397,42 @@ async function scanViewport(
     }
     options.targetPolicy.assertNoViolations();
   }
+}
+
+/**
+ * Bring the page to the state a person scrolling it would see: transitions
+ * and animations land on their final frame, and one pass down the page fires
+ * lazy images and scroll-triggered reveals. Bounded so a very long page still
+ * captures in reasonable time.
+ */
+async function settleForCapture(page: Page, viewportHeight: number): Promise<void> {
+  await page.addStyleTag({
+    content: "*,*::before,*::after{animation-duration:1ms!important;animation-delay:0s!important;transition-duration:1ms!important;transition-delay:0s!important;scroll-behavior:auto!important}",
+  }).catch(() => {});
+  const documentHeight = (): Promise<number> => page.evaluate(() => document.documentElement.scrollHeight);
+  // A preloader or entrance sequence can hold the document at viewport height
+  // for a moment after load. Wait for the height to stop changing, briefly.
+  let height = await documentHeight();
+  for (let stable = 0, polls = 0; stable < 2 && polls < 15; polls += 1) {
+    await page.waitForTimeout(200);
+    const next = await documentHeight();
+    stable = next === height ? stable + 1 : 0;
+    height = next;
+  }
+  const step = Math.max(200, Math.floor(viewportHeight * 0.8));
+  const maxSteps = 40;
+  // Two passes at most: the first can reveal lazy content that makes the page taller.
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (let offset = step, count = 0; offset < height && count < maxSteps; offset += step, count += 1) {
+      await page.evaluate((y) => window.scrollTo(0, y), offset);
+      await page.waitForTimeout(80);
+    }
+    const grown = await documentHeight();
+    if (grown <= height * 1.1) break;
+    height = grown;
+  }
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(300);
 }
 
 export async function scanPage(
