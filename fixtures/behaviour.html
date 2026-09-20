@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VQA behaviour fixture</title>
+<style>
+  body { margin: 24px; color: #20242a; background: #fff; font: 16px/1.5 sans-serif; }
+  main { max-width: 40rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Behaviour capture fixture</h1>
+  <p>This visually healthy page emits deterministic browser behaviour.</p>
+  <button type="button">Trigger delayed behaviour</button>
+  <img src="/missing-asset.png?fixture=same-origin" alt="Expected missing fixture asset">
+</main>
+<script>
+  console.error("Fixture console error");
+  console.warn("Fixture console warning");
+  void fetch("/expected-503?fixture=same-origin");
+  document.cookie = "vqa_fixture_cookie=secret-cookie-value; Path=/; SameSite=Strict";
+  document.cookie = "vqa_rejected_cookie=secret-rejected-value; Path=/; SameSite=None";
+  document.cookie = "vqa_absent_cookie=; Path=/; Max-Age=0; SameSite=Lax";
+  localStorage.setItem("vqa.fixture.local", "secret-local-value");
+  sessionStorage.setItem("vqa.fixture.session", "secret-session-value");
+  document.querySelector("button").addEventListener("click", () => {
+    setTimeout(() => {
+      console.error("Delayed scenario error");
+      void fetch("/delayed-503?fixture=same-origin");
+      localStorage.setItem("vqa.fixture.transient", "secret-transient-value");
+      localStorage.removeItem("vqa.fixture.transient");
+      document.cookie = "vqa_transient_cookie=secret-transient-cookie; Path=/; SameSite=Lax";
+      document.cookie = "vqa_transient_cookie=; Path=/; Max-Age=0; SameSite=Lax";
+      const frame = document.createElement("iframe");
+      frame.hidden = true;
+      frame.src = "/frame-storage.html";
+      document.body.append(frame);
+    }, 100);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm run build
+
+      # The engine launches Playwright Chromium from its own per-user cache;
+      # some engine tests also drive Playwright directly from the stock cache.
+      - run: node packages/cli/dist/bin.js browser install
+      - run: pnpm exec playwright install --with-deps chromium
+
+      - run: pnpm run lint
+      - run: pnpm run check-boundaries
+      - run: pnpm run test
+
+      # Build the publishable tarball and prove it installs and runs in a
+      # clean consumer project without any hidden download.
+      - run: pnpm run package:npm
+      - run: pnpm run package:test

@@ -1,0 +1,16 @@
+{
+  "name": "@vqa/cli",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "vqa": "./dist/bin.js"
+  },
+  "dependencies": {
+    "@vqa/contract": "workspace:*",
+    "@vqa/engine": "workspace:*",
+    "@vqa/model-adapter": "workspace:*"
+  }
+}

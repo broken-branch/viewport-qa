@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "copies": [
+    {
+      "source": "CHANGELOG.md",
+      "destination": "CHANGELOG.md"
+    },
+    {
+      "source": "CONTRIBUTING.md",
+      "destination": "CONTRIBUTING.md"
+    },
+    {
+      "source": "LICENSE",
+      "destination": "LICENSE"
+    },
+    {
+      "source": "README.md",
+      "destination": "README.md"
+    },
+    {
+      "source": "SECURITY.md",
+      "destination": "SECURITY.md"
+    },
+    {
+      "source": "docs/AI-CONSUMPTION.md",
+      "destination": "docs/AI-CONSUMPTION.md"
+    },
+    {
+      "source": "docs/browser-management.md",
+      "destination": "docs/browser-management.md"
+    },
+    {
+      "source": "docs/cli-reference.md",
+      "destination": "docs/cli-reference.md"
+    },
+    {
+      "source": "docs/privacy-and-data.md",
+      "destination": "docs/privacy-and-data.md"
+    },
+    {
+      "source": "docs/quickstart.md",
+      "destination": "docs/quickstart.md"
+    },
+    {
+      "source": "docs/report-formats.md",
+      "destination": "docs/report-formats.md"
+    },
+    {
+      "source": "docs/review-and-handoff.md",
+      "destination": "docs/review-and-handoff.md"
+    },
+    {
+      "source": "docs/security.md",
+      "destination": "docs/security.md"
+    },
+    {
+      "source": "docs/troubleshooting.md",
+      "destination": "docs/troubleshooting.md"
+    },
+    {
+      "source": "docs/assets/review-gui.png",
+      "destination": "docs/assets/review-gui.png"
+    },
+    {
+      "source": "docs/examples/minimal-ai-handoff.json",
+      "destination": "docs/examples/minimal-ai-handoff.json"
+    },
+    {
+      "source": "docs/examples/minimal-review-manifest.json",
+      "destination": "docs/examples/minimal-review-manifest.json"
+    },
+    {
+      "source": "docs/examples/minimal-review-state.json",
+      "destination": "docs/examples/minimal-review-state.json"
+    },
+    {
+      "source": "docs/examples/scenarios.json",
+      "destination": "docs/examples/scenarios.json"
+    }
+  ]
+}

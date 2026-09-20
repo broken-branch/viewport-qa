@@ -1,0 +1,36 @@
+{
+  "name": "viewport-qa-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.5.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "version:sync": "node scripts/sync-version.mjs",
+    "version:check": "node scripts/sync-version.mjs --check",
+    "build": "pnpm version:check && tsc -b && node scripts/set-cli-executable.mjs",
+    "browser:install": "pnpm --filter @vqa/engine exec playwright install chromium",
+    "package:npm": "node scripts/build-npm-package.mjs",
+    "package:test": "node scripts/test-npm-package-security.mjs && node scripts/test-npm-package.mjs",
+    "package:test:browser": "node scripts/test-npm-package-browser.mjs",
+    "typecheck": "tsc -b --pretty false",
+    "lint": "eslint .",
+    "check-boundaries": "node scripts/check-boundaries.mjs",
+    "test": "vitest run",
+    "vqa": "node packages/cli/dist/bin.js",
+    "check-all": "node scripts/check-all.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@types/node": "22.20.1",
+    "esbuild": "0.28.1",
+    "eslint": "9.39.5",
+    "pdfjs-dist": "6.2.108",
+    "playwright": "1.61.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.64.0",
+    "vitest": "3.2.7"
+  },
+  "license": "MIT"
+}

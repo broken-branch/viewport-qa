@@ -1,0 +1,78 @@
+{
+  "name": "viewport-qa",
+  "version": "0.5.0",
+  "description": "Scan web pages at multiple viewports, detect visual defects, review screenshots locally, and hand off change requests to humans or AI agents.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "vqa": "./dist/bin.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/broken-branch/viewport-qa.git"
+  },
+  "homepage": "https://github.com/broken-branch/viewport-qa#readme",
+  "bugs": {
+    "url": "https://github.com/broken-branch/viewport-qa/issues"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "files": [
+    "dist/bin.js",
+    "dist/index.js",
+    "dist/index.d.ts",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "PACKAGE-CONTENTS.json",
+    "README.md",
+    "SECURITY.md",
+    "THIRD-PARTY-NOTICES.txt",
+    "docs/AI-CONSUMPTION.md",
+    "docs/browser-management.md",
+    "docs/cli-reference.md",
+    "docs/privacy-and-data.md",
+    "docs/quickstart.md",
+    "docs/report-formats.md",
+    "docs/review-and-handoff.md",
+    "docs/security.md",
+    "docs/troubleshooting.md",
+    "docs/assets/review-gui.png",
+    "docs/examples/minimal-ai-handoff.json",
+    "docs/examples/minimal-review-manifest.json",
+    "docs/examples/minimal-review-state.json",
+    "docs/examples/scenarios.json"
+  ],
+  "dependencies": {
+    "playwright": "1.61.0",
+    "pngjs": "7.0.0"
+  },
+  "keywords": [
+    "visual-qa",
+    "viewport",
+    "responsive",
+    "screenshot",
+    "playwright",
+    "layout",
+    "overflow",
+    "contrast",
+    "accessibility",
+    "review",
+    "qa",
+    "cli"
+  ],
+  "author": "Michael Klund"
+}

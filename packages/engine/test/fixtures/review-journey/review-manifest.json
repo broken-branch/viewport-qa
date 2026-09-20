@@ -1,0 +1,359 @@
+{
+  "artifact_type": "vq-review-manifest",
+  "schema_version": 1,
+  "manifest_id": "VQ-P0-REVIEW-MANIFEST-01",
+  "run_id": "portfolio-pivot-run-20260820T133909Z",
+  "source_report": {
+    "tool": "viewport-qa",
+    "tool_version": "0.5.0",
+    "format_version": "2",
+    "source_sha": "abb1eb6c2b41ef7229cb19c5d051a4d2fd8a8f01",
+    "report_schema_version": "2",
+    "manifest_schema_version": 1,
+    "review_state_schema_version": 1
+  },
+  "pages": [
+    {
+      "id": "page-home",
+      "label": "Home",
+      "url": "https://northstar.example/"
+    },
+    {
+      "id": "page-checkout",
+      "label": "Checkout",
+      "url": "https://northstar.example/checkout"
+    }
+  ],
+  "states": [
+    {
+      "id": "state-default",
+      "label": "Default",
+      "arrangement_provenance": "Original synthetic Northstar page in its healthy baseline state; capture invariants were asserted before capture."
+    },
+    {
+      "id": "state-alternate",
+      "label": "Alternate",
+      "arrangement_provenance": "The same synthetic page with its preregistered issue marker and exact geometry or color invariants asserted before capture."
+    }
+  ],
+  "assets": [
+    {
+      "id": "page-home--state-default--390x844",
+      "kind": "full-screenshot",
+      "coordinate_id": "page-home--state-default--390x844",
+      "source_relative_path": "page-home--state-default--390x844.png",
+      "media_type": "image/png",
+      "byte_length": 60336,
+      "sha256": "13c46d4d34897e75e6d76e69bc96383d9c1639f3f019290cead483fcaaa33ab2",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "id": "page-home--state-default--1280x800",
+      "kind": "full-screenshot",
+      "coordinate_id": "page-home--state-default--1280x800",
+      "source_relative_path": "page-home--state-default--1280x800.png",
+      "media_type": "image/png",
+      "byte_length": 141019,
+      "sha256": "9f8e101ff0a25ed67166b898be2cadf481bd34260ff919814138de3402ce6e3e",
+      "width": 1280,
+      "height": 800
+    },
+    {
+      "id": "page-home--state-alternate--390x844",
+      "kind": "full-screenshot",
+      "coordinate_id": "page-home--state-alternate--390x844",
+      "source_relative_path": "page-home--state-alternate--390x844.png",
+      "media_type": "image/png",
+      "byte_length": 58611,
+      "sha256": "a9ed46a148f3e581a88de24a1527e1e784b2e86783fd8093aaccdf9d27e86b9f",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "id": "page-home--state-alternate--1280x800",
+      "kind": "full-screenshot",
+      "coordinate_id": "page-home--state-alternate--1280x800",
+      "source_relative_path": "page-home--state-alternate--1280x800.png",
+      "media_type": "image/png",
+      "byte_length": 138985,
+      "sha256": "bfa2317cea4eec897e17e670c1d7360fb0353750e2088fca68ef30f1ef6c759d",
+      "width": 1280,
+      "height": 800
+    },
+    {
+      "id": "page-checkout--state-default--390x844",
+      "kind": "full-screenshot",
+      "coordinate_id": "page-checkout--state-default--390x844",
+      "source_relative_path": "page-checkout--state-default--390x844.png",
+      "media_type": "image/png",
+      "byte_length": 46070,
+      "sha256": "ef80db57bac3e5a0ff2292263064fe2c23da7e88b01cd59eea81703e2f89dc07",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "id": "page-checkout--state-default--1280x800",
+      "kind": "full-screenshot",
+      "coordinate_id": "page-checkout--state-default--1280x800",
+      "source_relative_path": "page-checkout--state-default--1280x800.png",
+      "media_type": "image/png",
+      "byte_length": 68635,
+      "sha256": "91d5137f510f1e930f2ffc83f63d4520f3cf07971076d1c6cc4fb4aa96171480",
+      "width": 1280,
+      "height": 800
+    },
+    {
+      "id": "page-checkout--state-alternate--390x844",
+      "kind": "full-screenshot",
+      "coordinate_id": "page-checkout--state-alternate--390x844",
+      "source_relative_path": "page-checkout--state-alternate--390x844.png",
+      "media_type": "image/png",
+      "byte_length": 46697,
+      "sha256": "9522d1fb91bc134236d5dbfa89a9d634f408ef48bf9ae1318ec6b8bca6b9ed90",
+      "width": 390,
+      "height": 844
+    },
+    {
+      "id": "page-checkout--state-alternate--1280x800",
+      "kind": "full-screenshot",
+      "coordinate_id": "page-checkout--state-alternate--1280x800",
+      "source_relative_path": "page-checkout--state-alternate--1280x800.png",
+      "media_type": "image/png",
+      "byte_length": 68652,
+      "sha256": "012252eb256677ad2660669df4aafaae081d90059d9e903794d0a8de2fc08a0d",
+      "width": 1280,
+      "height": 800
+    },
+    {
+      "id": "page-checkout--state-alternate--390x844--issue-crop",
+      "kind": "issue-crop",
+      "coordinate_id": "page-checkout--state-alternate--390x844",
+      "issue_id": "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED",
+      "source_relative_path": "page-checkout--state-alternate--390x844--issue-crop.png",
+      "media_type": "image/png",
+      "byte_length": 3904,
+      "sha256": "986f129279189b669f65a6da6ef0932acd6681a3e51f5e36d898c2a1f5011f71",
+      "width": 334,
+      "height": 54
+    }
+  ],
+  "issues": [
+    {
+      "id": "VQ-ISSUE-HOME-LOW-CONTRAST-CTA",
+      "title": "Primary action is hard to read",
+      "type": "Contrast",
+      "severity": "high",
+      "description": "The text and button background do not have enough contrast.",
+      "selector": "[data-testid=primary-cta]",
+      "capture_coordinate_ids": [
+        "page-home--state-alternate--390x844",
+        "page-home--state-alternate--1280x800"
+      ],
+      "rects": {
+        "page-home--state-alternate--390x844": {
+          "x": 39,
+          "y": 301,
+          "width": 144,
+          "height": 59
+        },
+        "page-home--state-alternate--1280x800": {
+          "x": 95,
+          "y": 352,
+          "width": 190,
+          "height": 58
+        }
+      },
+      "heuristic_suggestion": "Increase the contrast between the action label and its background.",
+      "ai_recommendation_status": {
+        "status": "unavailable",
+        "reason": "No model recommendation was requested for this controlled preview."
+      }
+    },
+    {
+      "id": "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED",
+      "title": "Checkout total is clipped",
+      "type": "Clipped text",
+      "severity": "high",
+      "description": "The order total does not fit in its available space.",
+      "selector": "[data-testid=order-total]",
+      "capture_coordinate_ids": [
+        "page-checkout--state-alternate--390x844",
+        "page-checkout--state-alternate--1280x800"
+      ],
+      "crop_asset_id": "page-checkout--state-alternate--390x844--issue-crop",
+      "rects": {
+        "page-checkout--state-alternate--390x844": {
+          "x": 28,
+          "y": 540,
+          "width": 334,
+          "height": 54
+        },
+        "page-checkout--state-alternate--1280x800": {
+          "x": 740,
+          "y": 487,
+          "width": 436,
+          "height": 60
+        }
+      },
+      "heuristic_suggestion": "Allow the total value enough width to render without clipping.",
+      "ai_recommendation_status": {
+        "status": "unavailable",
+        "reason": "No model recommendation was requested for this controlled preview."
+      }
+    }
+  ],
+  "captures": [
+    {
+      "coordinate_id": "page-home--state-default--390x844",
+      "page_id": "page-home",
+      "state_id": "state-default",
+      "resolution": {
+        "label": "390 × 844",
+        "width": 390,
+        "height": 844,
+        "device_scale_factor": 1
+      },
+      "full_asset_id": "page-home--state-default--390x844",
+      "issue_ids": [],
+      "expected_verdict": "PASS",
+      "reason_codes": [
+        "NO_PREREGISTERED_PLANTED_ISSUE"
+      ]
+    },
+    {
+      "coordinate_id": "page-home--state-default--1280x800",
+      "page_id": "page-home",
+      "state_id": "state-default",
+      "resolution": {
+        "label": "1280 × 800",
+        "width": 1280,
+        "height": 800,
+        "device_scale_factor": 1
+      },
+      "full_asset_id": "page-home--state-default--1280x800",
+      "issue_ids": [],
+      "expected_verdict": "PASS",
+      "reason_codes": [
+        "NO_PREREGISTERED_PLANTED_ISSUE"
+      ]
+    },
+    {
+      "coordinate_id": "page-home--state-alternate--390x844",
+      "page_id": "page-home",
+      "state_id": "state-alternate",
+      "resolution": {
+        "label": "390 × 844",
+        "width": 390,
+        "height": 844,
+        "device_scale_factor": 1
+      },
+      "full_asset_id": "page-home--state-alternate--390x844",
+      "issue_ids": [
+        "VQ-ISSUE-HOME-LOW-CONTRAST-CTA"
+      ],
+      "expected_verdict": "FAIL",
+      "reason_codes": [
+        "PREREGISTERED_PLANTED_ISSUE_PRESENT"
+      ]
+    },
+    {
+      "coordinate_id": "page-home--state-alternate--1280x800",
+      "page_id": "page-home",
+      "state_id": "state-alternate",
+      "resolution": {
+        "label": "1280 × 800",
+        "width": 1280,
+        "height": 800,
+        "device_scale_factor": 1
+      },
+      "full_asset_id": "page-home--state-alternate--1280x800",
+      "issue_ids": [
+        "VQ-ISSUE-HOME-LOW-CONTRAST-CTA"
+      ],
+      "expected_verdict": "FAIL",
+      "reason_codes": [
+        "PREREGISTERED_PLANTED_ISSUE_PRESENT"
+      ]
+    },
+    {
+      "coordinate_id": "page-checkout--state-default--390x844",
+      "page_id": "page-checkout",
+      "state_id": "state-default",
+      "resolution": {
+        "label": "390 × 844",
+        "width": 390,
+        "height": 844,
+        "device_scale_factor": 1
+      },
+      "full_asset_id": "page-checkout--state-default--390x844",
+      "issue_ids": [],
+      "expected_verdict": "PASS",
+      "reason_codes": [
+        "NO_PREREGISTERED_PLANTED_ISSUE"
+      ]
+    },
+    {
+      "coordinate_id": "page-checkout--state-default--1280x800",
+      "page_id": "page-checkout",
+      "state_id": "state-default",
+      "resolution": {
+        "label": "1280 × 800",
+        "width": 1280,
+        "height": 800,
+        "device_scale_factor": 1
+      },
+      "full_asset_id": "page-checkout--state-default--1280x800",
+      "issue_ids": [],
+      "expected_verdict": "PASS",
+      "reason_codes": [
+        "NO_PREREGISTERED_PLANTED_ISSUE"
+      ]
+    },
+    {
+      "coordinate_id": "page-checkout--state-alternate--390x844",
+      "page_id": "page-checkout",
+      "state_id": "state-alternate",
+      "resolution": {
+        "label": "390 × 844",
+        "width": 390,
+        "height": 844,
+        "device_scale_factor": 1
+      },
+      "full_asset_id": "page-checkout--state-alternate--390x844",
+      "issue_ids": [
+        "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED"
+      ],
+      "expected_verdict": "FAIL",
+      "reason_codes": [
+        "PREREGISTERED_PLANTED_ISSUE_PRESENT"
+      ]
+    },
+    {
+      "coordinate_id": "page-checkout--state-alternate--1280x800",
+      "page_id": "page-checkout",
+      "state_id": "state-alternate",
+      "resolution": {
+        "label": "1280 × 800",
+        "width": 1280,
+        "height": 800,
+        "device_scale_factor": 1
+      },
+      "full_asset_id": "page-checkout--state-alternate--1280x800",
+      "issue_ids": [
+        "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED"
+      ],
+      "expected_verdict": "FAIL",
+      "reason_codes": [
+        "PREREGISTERED_PLANTED_ISSUE_PRESENT"
+      ]
+    }
+  ],
+  "audit_verdict": {
+    "value": "FAIL",
+    "policy_id": "vq-corpus-verdict-v1",
+    "reason_codes": [
+      "PREREGISTERED_PLANTED_ISSUE_PRESENT"
+    ]
+  }
+}

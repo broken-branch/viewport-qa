@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/contract" },
+    { "path": "packages/model-adapter" },
+    { "path": "packages/detectors" },
+    { "path": "packages/engine" },
+    { "path": "packages/cli" }
+  ]
+}

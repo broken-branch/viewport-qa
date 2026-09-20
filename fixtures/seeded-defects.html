@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VQA seeded-defects fixture</title>
+<style>
+  @font-face {
+    font-family: "Vqa Missing Fixture";
+    src: url("data:font/woff2;base64,AA==") format("woff2");
+  }
+  body { font: 16px/1.5 sans-serif; margin: 16px; }
+  section { margin: 16px 0; }
+  h2 { font-size: 18px; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+  <h1>Seeded defects fixture</h1>
+  <p>Each section below seeds exactly one known visual defect for detector tests.</p>
+
+  <!-- SEED 1: page overflow (horizontal scroll). 3000px wide bar. -->
+  <section>
+    <h2>Page overflow</h2>
+    <div id="seed-overflow" style="width: 3000px; height: 40px; background: #d33;">
+      This bar is 3000px wide and forces horizontal page scroll at every common viewport.
+    </div>
+  </section>
+
+  <!-- SEED 2: element overflow. Fixed-width child inside a narrower parent
+       whose overflow-x stays visible (content spills out). -->
+  <section>
+    <h2>Element overflow</h2>
+    <div id="seed-eloverflow" style="width: 200px; border: 1px solid #999; overflow-x: visible;">
+      <div style="width: 320px; height: 24px; background: #fa0;">320px child in a 200px box</div>
+    </div>
+  </section>
+
+  <!-- SEED 3: overlap. Two absolutely positioned text boxes colliding. -->
+  <section style="position: relative; height: 120px;">
+    <h2>Overlap</h2>
+    <div id="seed-overlap-a" style="position: absolute; top: 30px; left: 10px; width: 160px; height: 60px; background: #ffd;">
+      First overlapping box with text
+    </div>
+    <div id="seed-overlap-b" style="position: absolute; top: 50px; left: 90px; width: 160px; height: 60px; background: #dfd;">
+      Second overlapping box with text
+    </div>
+  </section>
+
+  <!-- SEED 4: one-word-per-line wrapping in a 44px column. -->
+  <section>
+    <h2>Wrapping: one word per line</h2>
+    <div id="seed-wrap-column" style="width: 44px; border: 1px dashed #999;">
+      Every single word wraps onto its own line here
+    </div>
+  </section>
+
+  <!-- SEED 5: mid-word break via overflow-wrap anywhere. -->
+  <section>
+    <h2>Wrapping: mid-word break</h2>
+    <div id="seed-wrap-midword" style="width: 80px; border: 1px dashed #999; overflow-wrap: anywhere;">
+      Supercalifragilisticexpialidocious
+    </div>
+  </section>
+
+  <!-- SEED 6: cramped spacing. Two zero-margin paragraphs touching. -->
+  <section>
+    <h2>Cramped spacing</h2>
+    <div>
+      <p id="seed-cramped-1" style="margin: 0;">First paragraph with absolutely no breathing room below it.</p>
+      <p id="seed-cramped-2" style="margin: 0;">Second paragraph starting flush against the previous one.</p>
+    </div>
+  </section>
+
+  <!-- SEED 7: excessive gap. Normal 16px rhythm, then a 400px hole. -->
+  <section>
+    <h2>Excessive gap</h2>
+    <div id="seed-gap-parent">
+      <p style="margin: 0 0 16px;">Paragraph one in a steady rhythm.</p>
+      <p style="margin: 0 0 16px;">Paragraph two in a steady rhythm.</p>
+      <p style="margin: 0 0 400px;" id="seed-gap-before">Paragraph three, followed by a 400px hole.</p>
+      <p style="margin: 0;" id="seed-gap-after">Paragraph four, stranded after the hole.</p>
+    </div>
+  </section>
+
+  <!-- SEED 8: clipped text. 100px of text clipped at 28px. -->
+  <section>
+    <h2>Clipped text</h2>
+    <div id="seed-clipped" style="height: 28px; overflow: hidden; border: 1px solid #999;">
+      This block contains several lines of text. The container is only 28 pixels tall
+      with overflow hidden, so most of this copy is cut off and unreadable, which is
+      exactly the defect the clipped-text detector must find.
+    </div>
+  </section>
+
+  <!-- SEED 9: offscreen interactive. Fixed-position button parked off-viewport. -->
+  <button id="seed-offscreen" style="position: fixed; left: -300px; top: 10px; width: 120px; height: 40px;">
+    Unreachable
+  </button>
+
+  <!-- SEED 10: normal-size text below WCAG AA's 4.5:1 threshold. -->
+  <section style="background: #fff;">
+    <h2>Text contrast</h2>
+    <p id="seed-contrast" style="color: #888;">
+      This normal-size gray text does not have enough contrast against white.
+    </p>
+  </section>
+
+  <!-- SEED 11: a declared @font-face fails to load, forcing fallback text. -->
+  <section>
+    <h2>Missing font face</h2>
+    <p id="seed-font-missing" style="font-family: 'Vqa Missing Fixture', sans-serif;">
+      This text requests a deliberately invalid fixture font.
+    </p>
+  </section>
+
+  <!-- SEED 12: intended text is constrained to a zero-dimension box. -->
+  <section>
+    <h2>Zero-dimension text</h2>
+    <div id="seed-font-zero" style="width: 0; height: 0; overflow: hidden;">
+      This intended rendered text has no box.
+    </div>
+  </section>
+
+  <!-- SEED 13: rendered text exceeds a fixed, non-wrapping box. -->
+  <section>
+    <h2>Overflowing rendered text</h2>
+    <div id="seed-font-overflow" style="width: 110px; white-space: nowrap; overflow: visible;">
+      This rendered text cannot fit inside its fixed box.
+    </div>
+  </section>
+
+  <!-- SEED 14: foreground and background colors are nearly identical. -->
+  <section style="background: #fff;">
+    <h2>Near-invisible text color</h2>
+    <p id="seed-color" style="color: #f9f9f9;">
+      This text is nearly invisible because its colors collide.
+    </p>
+  </section>
+</body>
+</html>

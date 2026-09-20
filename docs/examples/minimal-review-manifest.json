@@ -1,0 +1,25 @@
+{
+  "artifact_type": "vq-review-manifest",
+  "schema_version": 1,
+  "manifest_id": "manifest-example-empty",
+  "run_id": "run-example-empty",
+  "source_report": {
+    "tool": "viewport-qa",
+    "tool_version": "0.5.0",
+    "format_version": "2",
+    "source_sha": "source-checkout",
+    "report_schema_version": "2",
+    "manifest_schema_version": 1,
+    "review_state_schema_version": 1
+  },
+  "pages": [],
+  "states": [],
+  "assets": [],
+  "issues": [],
+  "captures": [],
+  "audit_verdict": {
+    "value": "PASS",
+    "policy_id": "vq-detected-issues-v1",
+    "reason_codes": ["NO_DETECTED_ISSUES"]
+  }
+}

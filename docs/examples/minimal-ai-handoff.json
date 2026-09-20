@@ -1,0 +1,26 @@
+{
+  "artifact_type": "viewport-qa-change-request-bundle",
+  "schema_version": 1,
+  "export_policy_id": "vq-export-identity-v1",
+  "export_id": "vqexp-v1-example-empty",
+  "exported_at": "2026-08-23T00:00:00.000Z",
+  "review_state_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "source_report": {
+    "tool": "viewport-qa",
+    "tool_version": "0.5.0",
+    "format_version": "2",
+    "source_sha": "source-checkout",
+    "report_schema_version": "2",
+    "manifest_schema_version": 1,
+    "review_state_schema_version": 1,
+    "manifest_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "run_id": "run-example-empty"
+  },
+  "audit_verdict": {
+    "value": "PASS",
+    "policy_id": "vq-detected-issues-v1",
+    "reason_codes": ["NO_DETECTED_ISSUES"]
+  },
+  "assets": [],
+  "requests": []
+}

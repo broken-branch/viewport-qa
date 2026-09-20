@@ -1,0 +1,28 @@
+[
+  {
+    "label": "Toolbar panel",
+    "url": "/",
+    "steps": [
+      { "click": { "role": "button", "name": "Open toolbar" } },
+      { "fill": { "role": "textbox", "name": "Search records", "value": "Ada" } },
+      { "waitFor": { "role": "region", "name": "Toolbar panel" } }
+    ]
+  },
+  {
+    "label": "Settings modal",
+    "url": "/",
+    "steps": [
+      { "click": { "role": "button", "name": "Open settings" } },
+      { "waitFor": { "role": "dialog", "name": "Settings" } }
+    ]
+  },
+  {
+    "label": "Empty records",
+    "url": "/",
+    "steps": [
+      { "route": { "url": "/api/records", "status": 200, "body": "[]" } },
+      { "click": { "role": "button", "name": "Load records" } },
+      { "waitFor": { "role": "status", "name": "No records" } }
+    ]
+  }
+]

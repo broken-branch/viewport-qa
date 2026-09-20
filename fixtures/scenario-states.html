@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VQA scenario states fixture</title>
+  <style>
+    body { margin: 0; font: 16px/1.5 system-ui, sans-serif; background: #f3f6fa; color: #172033; }
+    header, main, [role="region"], dialog { padding: 1.25rem; }
+    header { display: flex; gap: 0.75rem; background: #263c69; color: white; }
+    button, input { padding: 0.6rem 0.8rem; font: inherit; }
+    [role="region"], dialog { border: 2px solid #4c65a8; background: white; }
+    [role="region"] { margin: 1rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <button type="button" id="toolbar-button">Open toolbar</button>
+    <button type="button" id="settings-button">Open settings</button>
+    <button type="button" disabled>Disabled action</button>
+  </header>
+  <section role="region" aria-label="Toolbar panel" id="toolbar" hidden>
+    <label>Search records <input type="text"></label>
+  </section>
+  <main>
+    <h1>Records</h1>
+    <button type="button" id="load-button">Load records</button>
+    <div id="records" aria-live="polite"></div>
+  </main>
+  <dialog aria-label="Settings">
+    <h2>Settings</h2>
+    <button type="button" id="close-settings">Close settings</button>
+  </dialog>
+  <script>
+    const toolbar = document.querySelector("#toolbar");
+    const settings = document.querySelector("dialog");
+    const records = document.querySelector("#records");
+    document.querySelector("#toolbar-button").addEventListener("click", () => { toolbar.hidden = false; });
+    document.querySelector("#settings-button").addEventListener("click", () => { settings.showModal(); });
+    document.querySelector("#close-settings").addEventListener("click", () => { settings.close(); });
+    document.querySelector("#load-button").addEventListener("click", async () => {
+      records.setAttribute("role", "status");
+      records.textContent = "Loading records";
+      records.setAttribute("aria-label", records.textContent);
+      try {
+        const response = await fetch("/api/records");
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const items = await response.json();
+        records.textContent = items.length === 0 ? "No records" : items.map((item) => item.name).join(", ");
+      } catch (error) {
+        records.textContent = `Records unavailable: ${error.message}`;
+      }
+      records.setAttribute("aria-label", records.textContent);
+    });
+  </script>
+</body>
+</html>

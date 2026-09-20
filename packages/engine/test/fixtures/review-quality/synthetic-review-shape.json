@@ -1,0 +1,21 @@
+{
+  "provenance": "locally-authored-synthetic",
+  "source_material": "none",
+  "page": "https://review-quality.example/sample",
+  "capture_sizes": [
+    "390x844",
+    "1280x800",
+    "1920x1080"
+  ],
+  "legacy_shape": {
+    "raw_hits": 67,
+    "rows": 23
+  },
+  "relationships": {
+    "cross_viewport_occurrences": 3,
+    "nested_same_cause_occurrences": 6,
+    "small_scroll_delta_px": 5,
+    "positioned_composition_scroll_delta_px": 80
+  },
+  "copied_assets": []
+}

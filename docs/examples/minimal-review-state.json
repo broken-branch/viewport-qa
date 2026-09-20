@@ -1,0 +1,7 @@
+{
+  "artifact_type": "vq-review-state",
+  "schema_version": 1,
+  "manifest_id": "manifest-example-empty",
+  "manifest_sha256": "7a3e6089cb87cdacf05e71d701be94b6168a1b53bebc11f9d187b2555384c5a1",
+  "captures": {}
+}
