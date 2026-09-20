@@ -4,7 +4,7 @@ import { cpSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, wri
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { chromium } from "playwright";
+import { chromium, type Page } from "playwright";
 import { PRODUCT_VERSION } from "@vqa/contract";
 import type { BrowserStatus } from "@vqa/engine";
 import { launchStudio } from "../src/launcher.js";
@@ -22,6 +22,16 @@ async function listen(handler: Parameters<typeof createServer>[0]): Promise<{ se
   const server = createServer(handler); servers.push(server);
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
   const address = server.address(); return { server, origin: `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}` };
+}
+
+/** Leave only the given catalogue sizes checked on the start page; the defaults are the whole catalogue. */
+async function chooseSizes(page: Page, sizes: string[]): Promise<void> {
+  await page.locator("#devices").waitFor();
+  await page.evaluate((keep) => {
+    document.querySelectorAll<HTMLInputElement>(".device-toggle").forEach((toggle) => { toggle.checked = true; });
+    document.querySelectorAll<HTMLInputElement>(".vp").forEach((input) => { input.checked = keep.includes(input.value); });
+    document.querySelector<HTMLInputElement>(".vp")!.dispatchEvent(new Event("change", { bubbles: true }));
+  }, sizes);
 }
 
 function readyBrowserManager(root: string): NonNullable<LauncherOptions["browserManager"]> {
@@ -291,6 +301,7 @@ describe("Linux no-terminal launcher controller", () => {
       await page.goto(launched.launch.href);
       await page.locator("#fileTab").click();
       await page.locator("#file").setInputFiles({ name: "warning.html", mimeType: "text/html", buffer: Buffer.from("<!doctype html><title>Warning proof</title><h1>Published</h1>") });
+      await chooseSizes(page, ["390x844", "1366x768"]);
       await page.locator("#scan").click();
       await page.locator("#openCompleted").waitFor({ timeout: 20_000 });
       const state = await (await launched.call("/api/job")).json() as { reportPath: string; warning: string };
@@ -317,8 +328,22 @@ describe("Linux no-terminal launcher controller", () => {
       page.on("console", (message) => { if (message.type() === "error") consoleErrors.push(message.text()); });
       await page.goto(first.launch.href);
       await page.locator("h1", { hasText: "Start a visual review" }).waitFor();
+
+      // Devices come first; a device's sizes follow it and start all on.
+      expect(await page.locator(".device").count()).toBe(3);
+      expect(await page.locator(".device-toggle").evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))).toEqual(["mobile", "tablet", "desktop"]);
+      const catalogue = await page.locator(".vp").count();
+      expect(await page.locator(".vp:checked:enabled").count()).toBe(catalogue);
+      expect(await page.locator("#captureCount").textContent()).toBe(`${catalogue} captures per page`);
+      await page.locator('.device-toggle[value="tablet"]').uncheck();
+      expect(await page.locator('.device[aria-label="Tablet sizes"] .vp:disabled').count()).toBeGreaterThan(0);
+      expect(await page.locator(".vp:checked:enabled").count()).toBeLessThan(catalogue);
+      await page.locator('.device-toggle[value="tablet"]').check();
+      expect(await page.locator(".vp:checked:enabled").count()).toBe(catalogue);
+
       await page.locator("#fileTab").click();
       await page.locator("#file").setInputFiles({ name: "browser-journey.html", mimeType: "text/html", buffer: Buffer.from('<!doctype html><title>Browser journey</title><main><h1>Ready to review</h1><div id="clipped" style="height:28px;overflow:hidden;border:1px solid #999;width:200px">This block contains several lines of text that the fixed height cuts off before the end of the paragraph is reached.</div></main>') });
+      await chooseSizes(page, ["390x844", "1366x768"]);
       await page.locator("#scan").click();
       await page.locator("article.capture").first().waitFor({ timeout: 20_000 });
       expect(await page.locator("article.capture").count()).toBe(2);

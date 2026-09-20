@@ -107,7 +107,7 @@ describe("paint visibility", () => {
       await expect.poll(() => reviewPage.locator("#drawer[open]").count()).toBe(1);
       // One concern on every scanned size reads as such, not as three findings.
       expect(await reviewPage.locator("#drawerBody .issue-range").innerText())
-        .toMatch(/^At every size scanned \(390x844, 768x1024, 1440x900\)\.$/u);
+        .toMatch(/^At every size scanned \(Mobile 390×844, Tablet 768×1024, Desktop 1440×900\)\.$/u);
 
       const colorConcern = manifest.issues.find(
         (issue) => issue.type === "color" && issue.element_fingerprint === "id:seed-color",

@@ -9,8 +9,8 @@ Viewport QA captures rendered pages, detects visual issues, and lets a human rev
 ```text
 vqa doctor [--json]
 vqa browser status|install|repair|remove [--json]
-vqa scan <url-or-file> [--viewports WxH[@DPR],...] [--out <dir>]
-  [--timeout <ms>] [--baseline <report-dir>] [--crawl]
+vqa scan <url-or-file> [--devices mobile,tablet,desktop | --viewports WxH[@DPR],...]
+  [--out <dir>] [--timeout <ms>] [--baseline <report-dir>] [--crawl]
   [--max-pages <n>] [--max-depth <n>]
   [--strict] [--allow-origin <exact-http-origin>]...
   [--model-cli codex|claude] [--model-cli-bin <path>]

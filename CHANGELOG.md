@@ -9,6 +9,7 @@ First public release, published to npm as `viewport-qa`.
 - `vqa scan example.com` and the launch page accept a bare address; `https://` is inferred (`http://` for loopback).
 - Scans ordinary live sites: a page loads from any public origin as it would in a browser, redirects are followed, unsupported schemes are dropped quietly, and a request the page itself cancelled no longer fails the scan. `--strict` keeps the allowlist behaviour. The launch page no longer stops to approve origins.
 - Before capture, the page is scrolled once to trigger lazy loads and scroll-reveal animations, with reduced motion and instant transitions so captures show the settled page.
+- Captures are chosen by device: mobile, tablet, and desktop, each with its common sizes (ten in all, replacing the flat list of eight, which included a `390x844@3` DPR variant). `vqa scan --devices mobile,desktop` picks classes; the launch page picks devices first, then the sizes within each. Every capture is labelled with its class, in the review, the contact sheet, and handoffs ("Mobile 390×844"), and reports record it as `viewport.device`.
 - Layered-for-effect compositions are not defects: text or a control over a photo (no overlap, no contrast check), a modal's scroll lock, and controls parked far off-canvas.
 - More detector noise removed on real pages: elements under an opacity-0 ancestor are not visible, a fixed overlay never "overlaps" the page beneath it, overflow only counts when it is painted outside the box, and requests the browser aborted are not failed requests.
 

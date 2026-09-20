@@ -143,7 +143,7 @@ describe("manifest-backed screenshot review journey", () => {
     expect(await page.locator("#drawerTitle").textContent()).toBe("Checkout total is clipped");
     expect(await page.locator("#drawerBody .issue-crop img").count()).toBe(1);
     expect(await page.locator("#drawerBody .issue-finding").textContent()).toBe("The order total does not fit in its available space.");
-    expect(await page.locator("#drawerBody .issue-range").textContent()).toBe("At every size scanned (390 × 844, 1280 × 800).");
+    expect(await page.locator("#drawerBody .issue-range").textContent()).toBe("At every size scanned (Mobile 390×844, Desktop 1280×800).");
     expect(await page.getByRole("heading", { name: "Machine suggestions to promote" }).count()).toBe(0);
     const note = "Give the total enough width to show the full amount at this screen size.";
     await page.locator("#issueNote").fill(note);
@@ -573,12 +573,12 @@ describe("manifest-backed screenshot review journey", () => {
     const opener = card.locator(".image-open");
     await expect.poll(() => page.locator(".capture > .canvas .image-open").count()).toBe(8);
     expect(await card.getByRole("button", { name: "Open Image", exact: true }).isVisible()).toBe(true);
-    expect(await opener.getAttribute("aria-label")).toBe("Open Checkout / 390 × 844 screenshot");
+    expect(await opener.getAttribute("aria-label")).toBe("Open Checkout / Mobile 390×844 screenshot");
     await opener.focus();
     await page.keyboard.press("Enter");
     await expect.poll(() => page.locator("#lightbox").getAttribute("open")).toBe("");
     expect(await page.locator("#lightboxImage").getAttribute("alt")).toBe(
-      "Checkout page, 390 × 844 screenshot",
+      "Checkout page, Mobile 390×844 screenshot",
     );
     await expect
       .poll(() =>
@@ -621,7 +621,7 @@ describe("manifest-backed screenshot review journey", () => {
     });
     await crop.tap();
     expect(await page.locator("#lightboxImage").getAttribute("alt")).toBe(
-      "Close-up of Checkout total is clipped at 390 × 844",
+      "Close-up of Checkout total is clipped at Mobile 390×844",
     );
     await expect
       .poll(() =>

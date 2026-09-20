@@ -65,13 +65,16 @@ function issuesShownOn(capture) { return captureIssues(capture).filter(function(
 function statusMatches(capture) { return capture.issue_ids.length===0 ? selected.status.has("unreviewed") : issuesShownOn(capture).length>0; }
 function matches(capture) { return selected.page.has(capture.page_id) && (!scenarioEnabled || selected.scenario.has(capture.state_id)) && selected.resolution.has(capture.resolution.label) && statusMatches(capture); }
 function announce(text) { document.getElementById("liveRegion").textContent = text; }
-function captureName(capture) { return pageFor(capture).label + (scenarioEnabled ? " / " + stateFor(capture).label : "") + " / " + capture.resolution.label; }
+/* Human name for a capture size: device class plus pixels, matching describeViewport() in the engine. Manifests written before device classes carry no device, so the class is read from the width. */
+function deviceName(resolution) { const device = resolution.device || (resolution.width < 600 ? "mobile" : resolution.width < 1200 ? "tablet" : "desktop"); return device.charAt(0).toUpperCase() + device.slice(1); }
+function sizeName(resolution) { const scale = resolution.device_scale_factor || 1; return deviceName(resolution) + " " + resolution.width + "\u00d7" + resolution.height + (scale === 1 ? "" : " @" + scale + "x"); }
+function captureName(capture) { return pageFor(capture).label + (scenarioEnabled ? " / " + stateFor(capture).label : "") + " / " + sizeName(capture.resolution); }
 function confidenceFor(issue) { return issue.confidence || (issue.severity==="high"?"high":"needs-confirmation"); }
 function isBehaviourIssue(issue) { return issue.finding_kind==="behaviour" || behaviourTypes.has(issue.type); }
 function confidenceLabel(issue) { return ({high:"High confidence","needs-confirmation":"Needs visual confirmation","likely-noise":"Likely intentional/noise"})[confidenceFor(issue)]; }
-function affectedSizeLabel(issue) { const labels=issue.capture_coordinate_ids.map(function(id){return manifest.captures.find(function(capture){return capture.coordinate_id===id;});}).filter(Boolean).map(function(capture){return capture.resolution.label;});return Array.from(new Set(labels)).join(", "); }
+function affectedSizeLabel(issue) { const labels=issue.capture_coordinate_ids.map(function(id){return manifest.captures.find(function(capture){return capture.coordinate_id===id;});}).filter(Boolean).map(function(capture){return sizeName(capture.resolution);});return Array.from(new Set(labels)).join(", "); }
 function presentationGroupsFor(issue) { return (issue.group_ids||[]).map(function(id){return presentationGroupById.get(id);}).filter(Boolean); }
-function issueRange(issue){const affectedCaptures=issue.capture_coordinate_ids.map(function(id){return manifest.captures.find(function(item){return item.coordinate_id===id;});}).filter(Boolean);if(!affectedCaptures.length)return "";const scope=affectedCaptures[0];const scopeCaptures=manifest.captures.filter(function(item){return item.page_id===scope.page_id&&item.state_id===scope.state_id;});const byWidth=function(a,b){return a.resolution.width-b.resolution.width;};const affected=affectedCaptures.slice().sort(byWidth).map(function(item){return item.resolution.label;}),all=scopeCaptures.slice().sort(byWidth).map(function(item){return item.resolution.label;});const affectedSet=new Set(affected),clean=all.filter(function(label){return !affectedSet.has(label);});if(!clean.length)return all.length===1?"at "+all[0]:"at every size scanned ("+all.join(", ")+")";return "at "+affected.join(", ")+"; fine at "+clean.join(", ");}
+function issueRange(issue){const affectedCaptures=issue.capture_coordinate_ids.map(function(id){return manifest.captures.find(function(item){return item.coordinate_id===id;});}).filter(Boolean);if(!affectedCaptures.length)return "";const scope=affectedCaptures[0];const scopeCaptures=manifest.captures.filter(function(item){return item.page_id===scope.page_id&&item.state_id===scope.state_id;});const byWidth=function(a,b){return a.resolution.width-b.resolution.width;};const affected=affectedCaptures.slice().sort(byWidth).map(function(item){return sizeName(item.resolution);}),all=scopeCaptures.slice().sort(byWidth).map(function(item){return sizeName(item.resolution);});const affectedSet=new Set(affected),clean=all.filter(function(label){return !affectedSet.has(label);});if(!clean.length)return all.length===1?"at "+all[0]:"at every size scanned ("+all.join(", ")+")";return "at "+affected.join(", ")+"; fine at "+clean.join(", ");}
 const concernLabels={"page-overflow":"page content spills horizontally","element-overflow":"content spills outside its container",overlap:"visible content overlaps",wrapping:"text wraps poorly","cramped-spacing":"content may be too close together","excessive-gap":"spacing may be unexpectedly large","clipped-text":"text is clipped","offscreen-interactive":"control is outside the reachable area",contrast:"text contrast is too low","font-rendering":"text rendering is broken",color:"text is indistinguishable from its background","scenario-step":"scenario step could not be completed","console-message":"browser console message","failed-request":"failed browser request","storage-change":"browser storage write"};
 function containsTechnicalLocator(value,issue){const text=String(value||"");return text.includes(":nth-child(")||text.includes(" > ")||[issue.selector,issue.other_selector,issue.technical_locator].filter(Boolean).some(function(locator){return locator.length>2&&text.includes(locator);});}
 function boundedDisplay(value,maximum){const normalized=String(value||"").replace(/\\s+/g," ").trim();return normalized.length<=maximum?normalized:normalized.slice(0,maximum-1).trimEnd()+"…";}
@@ -81,7 +84,7 @@ function issueTitle(issue){const title=String(issue.title||"").trim(),name=Strin
 function occurrenceOn(issue,capture){return issue.occurrences&&issue.occurrences.find(function(item){return item.capture_coordinate_id===capture.coordinate_id;});}
 function issueFinding(issue,capture){const occurrence=capture?occurrenceOn(issue,capture):null;if(occurrence&&occurrence.message)return occurrence.message;const title=issueTitle(issue),rawTitle=String(issue.title||"").trim(),candidates=[issue.observed_outcome,issue.description];for(const candidate of candidates){const text=String(candidate||"").trim();if(text&&text!==title&&text!==rawTitle)return boundedDisplay(text,400);}return "Machine evidence suggests "+(concernLabels[issue.type]||(isBehaviourIssue(issue)?"browser behaviour":"a visual concern"))+".";}
 function behaviourEvidence(item){if(item.kind==="console-message")return item.level+" at "+item.sourceUrl+":"+item.line+": "+item.text;if(item.kind==="failed-request")return item.method+" "+item.url+" "+(item.status===undefined?"failed: "+item.failureReason:"answered "+item.status);if(item.storage==="cookie")return "cookie "+item.name+" for "+item.attributes.domain+item.attributes.path+" (SameSite="+item.attributes.sameSite+", Secure="+item.attributes.secure+", HttpOnly="+item.attributes.httpOnly+", Expires="+item.attributes.expires+")";return item.storage+" key "+item.key;}
-function occurrenceLabel(occurrence,issue){const capture=manifest.captures.find(function(item){return item.coordinate_id===occurrence.capture_coordinate_id;}),size=capture?capture.resolution.label:"affected size";if(occurrence.behaviour)return size+": "+boundedDisplay(behaviourEvidence(occurrence.behaviour),240);const primary=isBehaviourIssue(issue)?boundedDisplay(occurrence.semantic_name,72):containsTechnicalLocator(occurrence.semantic_name,issue)?"page content":boundedDisplay(occurrence.semantic_name,72),secondary=occurrence.other_semantic_name&&!containsTechnicalLocator(occurrence.other_semantic_name,issue)?" and "+boundedDisplay(occurrence.other_semantic_name,72):"";return size+": "+primary+secondary;}
+function occurrenceLabel(occurrence,issue){const capture=manifest.captures.find(function(item){return item.coordinate_id===occurrence.capture_coordinate_id;}),size=capture?sizeName(capture.resolution):"affected size";if(occurrence.behaviour)return size+": "+boundedDisplay(behaviourEvidence(occurrence.behaviour),240);const primary=isBehaviourIssue(issue)?boundedDisplay(occurrence.semantic_name,72):containsTechnicalLocator(occurrence.semantic_name,issue)?"page content":boundedDisplay(occurrence.semantic_name,72),secondary=occurrence.other_semantic_name&&!containsTechnicalLocator(occurrence.other_semantic_name,issue)?" and "+boundedDisplay(occurrence.other_semantic_name,72):"";return size+": "+primary+secondary;}
 function typeLabel(issue) { return concernLabels[issue.type] || issue.type.replace(/-/g," "); }
 async function navigateToLauncher(destination) { if(noteDirty&&!confirm("Your unsaved note will be lost. Leave the review now?"))return;try{await postJson("/api/navigation/"+destination,{});location.reload();}catch(error){announce("Could not return to the launcher");} }
 
@@ -128,8 +131,9 @@ function filterControls() {
   fragment.appendChild(facetMarkup("status","Issues",[["unreviewed","To review"],["export","In export"],["dismissed","Dismissed"]]));
   fragment.appendChild(facetMarkup("page","Page",manifest.pages.map(function(item){return [item.id,item.label];})));
   if(scenarioEnabled) fragment.appendChild(facetMarkup("scenario","Scenario",manifest.states.map(function(item){return [item.id,item.label];})));
-  const resolutions = Array.from(new Set(manifest.captures.map(function(item){return item.resolution.label;})));
-  fragment.appendChild(facetMarkup("resolution","Screen size",resolutions.map(function(item){return [item,item];})));
+  const resolutions = new Map();
+  manifest.captures.forEach(function(item){ if(!resolutions.has(item.resolution.label)) resolutions.set(item.resolution.label, sizeName(item.resolution)); });
+  fragment.appendChild(facetMarkup("resolution","Screen size",Array.from(resolutions.entries())));
   return fragment;
 }
 function clearFilters() {
@@ -198,7 +202,7 @@ function captureCard(capture, grouped) {
   const page = pageFor(capture), state = stateFor(capture), asset = assetById.get(capture.full_asset_id);
   const shown=issuesShownOn(capture);
   const condition = scenarioEnabled ? ", "+state.label+" scenario" : "";
-  const alt=page.label+" page"+condition+", "+capture.resolution.label+" screenshot";
+  const alt=page.label+" page"+condition+", "+sizeName(capture.resolution)+" screenshot";
   const imageControl=imageButton(asset,alt,"Open "+captureName(capture)+" screenshot",capture.resolution.width,capture.resolution.height);
   const stage = node("div", {class:"image-stage","data-width":String(capture.resolution.width),"data-height":String(capture.resolution.height)}, [imageControl]);
   shown.forEach(function(issue,index){const marker=markerFor(capture,issue,index+1);if(marker)stage.appendChild(marker);});
@@ -208,7 +212,7 @@ function captureCard(capture, grouped) {
   const list=node("ol",{class:"issue-list","aria-label":"Issues on "+captureName(capture)});
   shown.forEach(function(issue,index){list.appendChild(issueRow(issue,capture,index+1));});
   const children=[
-    node("header",{class:"capture-head"},[node("div",{},[node(grouped?"h3":"h2",{class:"capture-title",text:page.label+(scenarioEnabled?" / "+state.label:"")}),node("div",{class:"capture-path",text:capture.resolution.label})]),node("span",{class:"capture-summary",text:summary})]),
+    node("header",{class:"capture-head"},[node("div",{},[node(grouped?"h3":"h2",{class:"capture-title",text:page.label+(scenarioEnabled?" / "+state.label:"")}),node("div",{class:"capture-path",text:sizeName(capture.resolution)})]),node("span",{class:"capture-summary",text:summary})]),
     node("div",{class:"canvas",tabindex:"0","data-label":captureName(capture)+" screenshot canvas","aria-label":captureName(capture)+" screenshot canvas — Actual size at 100%"},[stage])
   ];
   if(shown.length)children.push(list);
@@ -368,7 +372,7 @@ function renderIssueDrawer() {
   const subject=issueSubject(issue);if(subject&&!behaviour)body.appendChild(node("p",{class:"issue-subject",text:"In \u201c"+subject+"\u201d"}));
   body.appendChild(node("p",{class:"help",text:captureName(capture)}));
   const crop=behaviour?undefined:cropFor(capture,issue);
-  if(crop){body.appendChild(node("h3",{text:"Close-up"}));body.appendChild(node("div",{class:"issue-crop"},[imageButton(crop,"Close-up of "+issueTitle(issue)+" at "+capture.resolution.label,"Open close-up of "+issueTitle(issue),crop.width,crop.height,"crop-open")]));}
+  if(crop){body.appendChild(node("h3",{text:"Close-up"}));body.appendChild(node("div",{class:"issue-crop"},[imageButton(crop,"Close-up of "+issueTitle(issue)+" at "+sizeName(capture.resolution),"Open close-up of "+issueTitle(issue),crop.width,crop.height,"crop-open")]));}
   body.appendChild(node("h3",{text:"What was found"}));
   body.appendChild(node("p",{class:"issue-finding",text:issueFinding(issue,capture)}));
   const range=issueRange(issue);if(range)body.appendChild(node("p",{class:"issue-range",text:capitalize(range)+"."}));
@@ -381,7 +385,7 @@ function renderIssueDrawer() {
   const textarea=node("textarea",{id:"issueNote",rows:"3",placeholder:"Anything the person or agent fixing this should know."});textarea.value=pendingNote!==null?pendingNote:issueNote(issue.id);textarea.addEventListener("input",function(){noteDirty=textarea.value.trim()!==issueNote(issue.id);const save=document.getElementById("saveNote");if(save)save.hidden=!noteDirty||status==="unreviewed";});body.appendChild(textarea);
   if(!behaviour){
     const highlightDetails=node("details",{class:"issue-highlight"},[node("summary",{text:"Adjust the highlight"})]);
-    const fullAlt="Full "+page.label+(scenarioEnabled?", "+state.label+" scenario":"")+" screenshot at "+capture.resolution.label;
+    const fullAlt="Full "+page.label+(scenarioEnabled?", "+state.label+" scenario":"")+" screenshot at "+sizeName(capture.resolution);
     const highlightStage=node("div",{class:"highlight-stage","data-highlight-stage":capture.coordinate_id},[imageButton(asset,fullAlt,"Open full "+captureName(capture)+" screenshot",capture.resolution.width,capture.resolution.height)]);addHighlightEditor(highlightStage,capture,issue);
     highlightDetails.appendChild(node("div",{class:"drawer-image"},[highlightStage]));
     const removed=effectiveHighlight(capture,issue)===null;const control=node("button",{type:"button","data-highlight-control":issue.id,text:removed?"Restore Highlight":"Remove Highlight","aria-label":(removed?"Restore":"Remove")+" highlight for "+issueTitle(issue),onclick:function(){saveIssueHighlight(capture,issue,effectiveHighlight(capture,issue)===null?paddedHighlight(capture,issue):null);}});

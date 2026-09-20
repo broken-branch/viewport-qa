@@ -1,4 +1,5 @@
 import type { Report } from "@vqa/contract";
+import { describeViewport } from "./viewports.js";
 
 function escapeHtml(value: string): string {
   return value
@@ -20,7 +21,7 @@ export function renderContactSheetHtml(report: Report): string {
   const groups = [...grouped.entries()].map(([groupLabel, groupCaptures]) => {
     const captures = groupCaptures.map((capture) => {
       const page = capture.pageUrl ?? report.url;
-      const label = capture.viewport.label;
+      const label = describeViewport(capture.viewport);
       const state = capture.scenarioLabel ? ` in the ${capture.scenarioLabel} state` : "";
       return `<figure>
       <img src="${escapeHtml(capture.screenshot)}" alt="Full-page screenshot of ${escapeHtml(page)}${escapeHtml(state)} at ${escapeHtml(label)}" loading="lazy">

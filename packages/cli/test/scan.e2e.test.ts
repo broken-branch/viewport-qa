@@ -69,6 +69,7 @@ describe("vqa scan (seeded-defects fixture, real binary)", () => {
     for (const viewport of report.viewports) {
       expect(existsSync(join(outDir, viewport.screenshot))).toBe(true);
     }
+    expect(report.viewports.map((viewport) => viewport.viewport.device)).toEqual(["mobile", "desktop"]);
   });
 
   it("writes a static contact sheet that references only report screenshots", () => {
@@ -86,9 +87,8 @@ describe("vqa scan (seeded-defects fixture, real binary)", () => {
       expect(source).not.toMatch(/^(?:[a-z]+:|\/|\\)/iu);
       expect(existsSync(join(outDir, source))).toBe(true);
     }
-    for (const capture of report.viewports) {
-      expect(html).toContain(`<strong>${capture.viewport.label}</strong>`);
-    }
+    expect(html).toContain("<strong>Mobile 390×844</strong>");
+    expect(html).toContain("<strong>Desktop 1280×800</strong>");
   });
 
   it("writes one compact agent record per grouped fixture defect", () => {
@@ -144,6 +144,7 @@ describe("vqa scan (seeded-defects fixture, real binary)", () => {
     ]);
     expect(manifest.pages.every((page) => /^page-[0-9a-f]{20}$/u.test(page.id))).toBe(true);
     expect(manifest.captures.every((capture) => /^capture-[0-9a-f]{20}$/u.test(capture.coordinate_id))).toBe(true);
+    expect(manifest.captures.map((capture) => capture.resolution.device)).toEqual(["mobile", "desktop"]);
     expect(manifest.issues.every((issue) => /^concern-[0-9a-f]{20}$/u.test(issue.id))).toBe(true);
     const html = readFileSync(join(outDir, "report.html"), "utf8");
     expect(html).toContain('id="vqa-manifest"');
@@ -166,6 +167,16 @@ describe("vqa scan (seeded-defects fixture, real binary)", () => {
       expect(bytes.readUInt32BE(16)).toBe(asset.width);
       expect(bytes.readUInt32BE(20)).toBe(asset.height);
     }
+  });
+
+  it("rejects a device list that is unknown or combined with --viewports before launching", async () => {
+    const unknown = await runBin(["scan", join(FIXTURES, "seeded-defects.html"), "--devices", "phone", "--out", join(outDir, "never")]);
+    expect(unknown.code).toBe(2);
+    expect(unknown.stderr).toContain('Unknown device class "phone"');
+    const both = await runBin(["scan", join(FIXTURES, "seeded-defects.html"), "--devices", "mobile", "--viewports", "390x844", "--out", join(outDir, "never")]);
+    expect(both.code).toBe(2);
+    expect(both.stderr).toContain("either --devices or --viewports");
+    expect(existsSync(join(outDir, "never"))).toBe(false);
   });
 
   it("refuses a non-empty destination without changing the completed report", async () => {

@@ -27,6 +27,7 @@ import {
   observedOutcome,
   semanticTitle,
 } from "./issue-semantics.js";
+import { deviceClassForWidth } from "./viewports.js";
 import {
   semanticFingerprintBase,
   semanticFingerprintIsAmbiguous,
@@ -168,6 +169,7 @@ export async function buildReviewManifest(
           width: viewport.viewport.width,
           height: viewport.viewport.height,
           device_scale_factor: viewport.viewport.deviceScaleFactor,
+          device: viewport.viewport.device ?? deviceClassForWidth(viewport.viewport.width),
         },
         full_asset_id: fullAssetId,
         issue_ids: [],

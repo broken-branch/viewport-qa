@@ -8,6 +8,7 @@ import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/
 import { pathToFileURL } from "node:url";
 import {
   browserStatus,
+  DEFAULT_VIEWPORT_SPECS,
   installBrowser,
   isLinkFreeExistingPath,
   normalizeTargetAddress,
@@ -25,6 +26,8 @@ const MAX_LOCAL_FILE_BYTES = 8_000_000;
 // JSON can encode each one-byte control character as six ASCII bytes. This
 // admits every valid 8 MB UTF-8 file plus the small, bounded request metadata.
 const MAX_LAUNCH_BODY = MAX_LOCAL_FILE_BYTES * 6 + 100_000;
+// The start page offers the device catalogue; one scan may take all of it.
+const MAX_LAUNCH_VIEWPORTS = DEFAULT_VIEWPORT_SPECS.length;
 const REPORT_INDEX_VERSION = 1;
 type JobStatus = "idle" | "running" | "cancelled" | "failed" | "complete";
 interface RecentReport { id: string; name: string; path: string; createdAt: string }
@@ -430,7 +433,7 @@ export async function launchStudio(options: LauncherOptions = {}): Promise<{ ser
       await disposeSpec(jobSpec);
       jobSpec = undefined;
       const body = await parseJson(request) as ScanRequest;
-      if (!Array.isArray(body.viewports) || body.viewports.length < 1 || body.viewports.length > 5 || body.viewports.some((item) => typeof item !== "string")) { jsonResponse(response, 400, { error: "choose one to five valid capture sizes" }); return; }
+      if (!Array.isArray(body.viewports) || body.viewports.length < 1 || body.viewports.length > MAX_LAUNCH_VIEWPORTS || body.viewports.some((item) => typeof item !== "string")) { jsonResponse(response, 400, { error: `choose between one and ${MAX_LAUNCH_VIEWPORTS} valid capture sizes` }); return; }
       parseViewportList(body.viewports.join(","));
       const reportPath = join(reportsRoot, timestampName());
       let target: string; let localTemporary: string | undefined;

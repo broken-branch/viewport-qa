@@ -7,17 +7,20 @@ import {
   buildAgentSummary,
   DEFAULT_MAX_DEPTH,
   DEFAULT_MAX_PAGES,
+  DEVICE_CLASS_IDS,
   formatAgentSummaryHuman,
   HARD_MAX_DEPTH,
   HARD_MAX_PAGES,
   markRunAsBaseline,
   normalizeTargetAddress,
+  parseDeviceList,
   parseViewportList,
   prepareScenarios,
   readAgentSummary,
   readScenarioRecipe,
   scan,
   TOOL_VERSION,
+  viewportsForDevices,
 } from "@vqa/engine";
 import {
   CliSubprocessModelAdapter,
@@ -36,7 +39,7 @@ const USAGE = `${PRODUCT_NAME} ${TOOL_VERSION}
 Usage:
   vqa doctor [--json]
   vqa browser status|install|repair|remove [--json]
-  vqa scan <url-or-file> [--viewports WxH[@DPR],...] [--out <dir>] [--timeout <ms>] [--baseline <report-dir>] [--scenarios <file>] [--crawl] [--max-pages <n>] [--max-depth <n>] [--strict] [--allow-origin <origin>] [--model-cli codex|claude]
+  vqa scan <url-or-file> [--devices mobile,tablet,desktop | --viewports WxH[@DPR],...] [--out <dir>] [--timeout <ms>] [--baseline <report-dir>] [--scenarios <file>] [--crawl] [--max-pages <n>] [--max-depth <n>] [--strict] [--allow-origin <origin>] [--model-cli codex|claude]
   vqa summarize <report-dir> [--json]
   vqa baseline <report-dir>
   vqa serve <report-dir> [--port <port>] [--read-only] [--idle-timeout <ms>]
@@ -57,8 +60,10 @@ Commands:
   launch Open the local start page and scan without a terminal.
 
 Options:
-  --viewports  Comma-separated list, e.g. 360x800,390x844@3,1920x1080
-               (default: common device matrix, see README)
+  --devices    Device classes to capture, any of ${DEVICE_CLASS_IDS.join(", ")};
+               each contributes its common sizes (default: all three, see README)
+  --viewports  Explicit comma-separated sizes instead of device classes,
+               e.g. 360x800,390x844@3,1920x1080
   --out        Output directory for scan (default: ./vqa-report)
   --timeout    Navigation timeout in ms (default: 30000)
   --baseline   Report directory whose matching viewport captures are compared
@@ -160,6 +165,7 @@ async function runScan(argv: string[]): Promise<number> {
     args: argv,
     allowPositionals: true,
     options: {
+      devices: { type: "string" },
       viewports: { type: "string" },
       out: { type: "string" },
       timeout: { type: "string" },
@@ -194,9 +200,21 @@ async function runScan(argv: string[]): Promise<number> {
     console.error("vqa scan: --max-depth requires --crawl");
     return 2;
   }
+  if (values.devices !== undefined && values.viewports !== undefined) {
+    console.error("vqa scan: give either --devices or --viewports, not both");
+    return 2;
+  }
   const url = targetToUrl(target);
   const outDir = resolve(values.out ?? "vqa-report");
-  const viewports = parseViewportList(values.viewports);
+  let viewports;
+  try {
+    viewports = values.devices !== undefined
+      ? viewportsForDevices(parseDeviceList(values.devices))
+      : parseViewportList(values.viewports);
+  } catch (error) {
+    console.error(`vqa scan: ${error instanceof Error ? error.message : String(error)}`);
+    return 2;
+  }
   const timeoutMs = values.timeout ? Number(values.timeout) : 30_000;
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
     throw new Error(`Invalid --timeout: ${values.timeout}`);
