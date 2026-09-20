@@ -78,7 +78,7 @@ describe("vqa serve shutdown (real built binary)", () => {
     cpSync(new URL("../../engine/test/fixtures/review-journey/", import.meta.url), reportDir, { recursive: true });
     const report: Report = {
       formatVersion: "2", tool: "viewport-qa", toolVersion: PRODUCT_VERSION,
-      schemaVersions: { report: "2", manifest: 1, reviewState: 1 },
+      schemaVersions: { report: "2", manifest: 1, reviewState: 2 },
       url: "file:///open-failure.html", createdAt: "2026-08-23T00:00:00.000Z",
       adapter: { impl: "stub", wired: false }, viewports: [], issues: [],
     };

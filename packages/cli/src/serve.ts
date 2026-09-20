@@ -5,7 +5,8 @@ import { existsSync } from "node:fs";
 import { link, lstat, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import type {
-  CaptureClassification,
+  IssueReview,
+  IssueReviewStatus,
   Decision,
   DecisionAction,
   DecisionsFile,
@@ -29,7 +30,6 @@ import {
   createHumanHandoffContent,
   createHumanHandoffPdf,
   EXPORT_POLICY_ID,
-  isUsefulReviewerOutcome,
   reviewStateSha256,
   validateCaptureAsset,
   validatedSource,
@@ -47,7 +47,6 @@ export const CONTENT_TYPES: Record<string, string> = {
 };
 
 const ACTIONS: readonly DecisionAction[] = ["approve", "reject", "message"];
-const CLASSIFICATIONS: readonly CaptureClassification[] = ["unreviewed", "good", "bad"];
 
 export function validateReportCompatibility(
   report: Report,
@@ -173,17 +172,16 @@ export function jsonResponse(
 function emptyReviewState(manifest: ReviewManifest, manifestSha256: string): ReviewState {
   return {
     artifact_type: "vq-review-state",
-    schema_version: 1,
+    schema_version: REVIEW_STATE_SCHEMA_VERSION,
     manifest_id: manifest.manifest_id,
     manifest_sha256: manifestSha256,
-    captures: Object.fromEntries(
-      manifest.captures.map((capture) => [
-        capture.coordinate_id,
-        { coordinate_id: capture.coordinate_id, classification: "unreviewed" },
-      ]),
-    ),
+    issues: {},
+    highlights: {},
   };
 }
+
+const ISSUE_STATUSES: readonly IssueReviewStatus[] = ["export", "dismissed"];
+const MAX_NOTE_LENGTH = 2000;
 
 function validReviewState(
   value: ReviewState,
@@ -191,37 +189,30 @@ function validReviewState(
   manifestSha256: string,
 ): boolean {
   if (
+    !value ||
+    typeof value !== "object" ||
     value.artifact_type !== "vq-review-state" ||
-    value.schema_version !== 1 ||
+    value.schema_version !== REVIEW_STATE_SCHEMA_VERSION ||
     value.manifest_id !== manifest.manifest_id ||
-    value.manifest_sha256 !== manifestSha256
+    value.manifest_sha256 !== manifestSha256 ||
+    !value.issues || typeof value.issues !== "object" ||
+    !value.highlights || typeof value.highlights !== "object"
   ) {
     return false;
   }
-  const known = new Set(manifest.captures.map((capture) => capture.coordinate_id));
-  const validHighlights = (id: string, capture: ReviewState["captures"][string]): boolean => {
-    const manifestCapture = manifest.captures.find((candidate) => candidate.coordinate_id === id)!;
-    return !capture.issue_highlights || Object.entries(capture.issue_highlights).every(([issueId, rect]) =>
-      manifestCapture.issue_ids.includes(issueId) && (rect === null || validHighlightRect(rect, manifestCapture.resolution.width, manifestCapture.resolution.height)));
-  };
-  const validRequest = (id: string, capture: ReviewState["captures"][string]): boolean => {
-    const request = capture.requested_change;if(!request)return true;
-    if(capture.classification!=="bad"||request.origin_coordinate_id!==id||typeof request.requested_change!=="string"||!Array.isArray(request.affected_coordinate_ids)||!Array.isArray(request.selected_issue_ids))return false;
-    if(new Set(request.affected_coordinate_ids).size!==request.affected_coordinate_ids.length||new Set(request.selected_issue_ids).size!==request.selected_issue_ids.length||!request.affected_coordinate_ids.includes(id)||request.affected_coordinate_ids.some((coordinateId)=>!known.has(coordinateId)))return false;
-    const selectable=new Set(request.affected_coordinate_ids.flatMap((coordinateId)=>manifest.captures.find((candidate)=>candidate.coordinate_id===coordinateId)!.issue_ids));
-    return request.selected_issue_ids.every((issueId)=>typeof issueId==="string"&&selectable.has(issueId))&&(request.requested_change.trim().length>0||request.selected_issue_ids.length>0);
-  };
-  return (
-    Object.keys(value.captures).length === known.size &&
-    Object.entries(value.captures).every(
-      ([id, capture]) =>
-        known.has(id) &&
-        capture.coordinate_id === id &&
-        CLASSIFICATIONS.includes(capture.classification) &&
-        validHighlights(id, capture) &&
-        validRequest(id, capture),
-    )
-  );
+  const knownIssues = new Set(manifest.issues.map((issue) => issue.id));
+  const validIssues = Object.entries(value.issues).every(([issueId, decision]) =>
+    knownIssues.has(issueId) &&
+    decision && typeof decision === "object" &&
+    ISSUE_STATUSES.includes(decision.status) &&
+    typeof decision.updated_at === "string" &&
+    (decision.note === undefined || (typeof decision.note === "string" && decision.note.length <= MAX_NOTE_LENGTH)));
+  const validHighlights = Object.entries(value.highlights).every(([coordinateId, byIssue]) => {
+    const capture = manifest.captures.find((candidate) => candidate.coordinate_id === coordinateId);
+    return Boolean(capture) && byIssue && typeof byIssue === "object" && Object.entries(byIssue).every(([issueId, rect]) =>
+      capture!.issue_ids.includes(issueId) && (rect === null || validHighlightRect(rect, capture!.resolution.width, capture!.resolution.height)));
+  });
+  return validIssues && validHighlights;
 }
 
 async function loadReviewState(
@@ -238,11 +229,12 @@ async function loadReviewState(
 }
 
 interface ReviewUpdateBody {
+  /** Decide about one issue: put it in the export, dismiss it, or clear the decision (null). */
+  issueId?: unknown;
+  status?: unknown;
+  note?: unknown;
+  /** Or adjust one highlight on one capture. */
   coordinateId?: unknown;
-  classification?: unknown;
-  requestedChange?: unknown;
-  affectedCoordinateIds?: unknown;
-  selectedIssueIds?: unknown;
   highlightIssueId?: unknown;
   highlightRect?: unknown;
 }
@@ -261,109 +253,46 @@ function applyReviewUpdate(
   body: ReviewUpdateBody,
   now: string,
 ): { state: ReviewState; changed: boolean } {
-  const { coordinateId, classification, requestedChange, affectedCoordinateIds, selectedIssueIds, highlightIssueId, highlightRect } = body;
-  const manifestCapture = typeof coordinateId === "string" ? manifest.captures.find((capture) => capture.coordinate_id === coordinateId) : undefined;
+  const { issueId, status, note, coordinateId, highlightIssueId, highlightRect } = body;
   if (highlightIssueId !== undefined) {
-    if (!manifestCapture || typeof highlightIssueId !== "string" || !manifestCapture.issue_ids.includes(highlightIssueId) ||
-      (highlightRect !== null && !validHighlightRect(highlightRect, manifestCapture.resolution.width, manifestCapture.resolution.height))) {
+    const capture = typeof coordinateId === "string" ? manifest.captures.find((candidate) => candidate.coordinate_id === coordinateId) : undefined;
+    if (!capture || typeof highlightIssueId !== "string" || !capture.issue_ids.includes(highlightIssueId) ||
+      (highlightRect !== null && !validHighlightRect(highlightRect, capture.resolution.width, capture.resolution.height))) {
       throw new Error("unknown issue highlight or invalid highlight geometry");
     }
-    const prior = state.captures[coordinateId as string]!;
-    if (JSON.stringify(prior.issue_highlights?.[highlightIssueId]) === JSON.stringify(highlightRect)) return { state, changed: false };
+    const prior = state.highlights[capture.coordinate_id]?.[highlightIssueId];
+    if (JSON.stringify(prior) === JSON.stringify(highlightRect)) return { state, changed: false };
     const next = structuredClone(state);
-    next.captures[coordinateId as string] = {
-      ...prior,
-      updated_at: now,
-      issue_highlights: { ...prior.issue_highlights, [highlightIssueId]: highlightRect as Rect | null },
-    };
+    next.highlights[capture.coordinate_id] = { ...next.highlights[capture.coordinate_id], [highlightIssueId]: highlightRect as Rect | null };
     return { state: next, changed: true };
   }
-  if (
-    typeof coordinateId !== "string" ||
-    !manifest.captures.some((capture) => capture.coordinate_id === coordinateId) ||
-    typeof classification !== "string" ||
-    !CLASSIFICATIONS.includes(classification as CaptureClassification)
-  ) {
-    throw new Error("unknown coordinate or invalid classification");
+  if (typeof issueId !== "string" || !manifest.issues.some((issue) => issue.id === issueId)) {
+    throw new Error("unknown issue");
   }
-  if (requestedChange !== undefined && typeof requestedChange !== "string") throw new Error("requested change must be reviewer-authored text");
-  if (requestedChange !== undefined && classification !== "bad") {
-    throw new Error("only a Needs changes review can contain a requested change");
+  if (status !== null && !ISSUE_STATUSES.includes(status as IssueReviewStatus)) {
+    throw new Error("issue status must be export, dismissed, or null to clear it");
   }
-  let affected: string[] | undefined;
-  if (affectedCoordinateIds !== undefined) {
-    if (
-      !Array.isArray(affectedCoordinateIds) ||
-      !affectedCoordinateIds.every((value) => typeof value === "string") ||
-      new Set(affectedCoordinateIds).size !== affectedCoordinateIds.length
-    ) {
-      throw new Error("affected screenshots must be unique manifest coordinates");
-    }
-    affected = [...affectedCoordinateIds].sort();
-    if (!affected.includes(coordinateId)) affected.unshift(coordinateId);
-    const known = new Set(manifest.captures.map((capture) => capture.coordinate_id));
-    if (affected.some((id) => !known.has(id))) throw new Error("unknown affected screenshot");
+  if (note !== undefined && (typeof note !== "string" || note.length > MAX_NOTE_LENGTH)) {
+    throw new Error(`note must be text of at most ${MAX_NOTE_LENGTH} characters`);
   }
-  if (requestedChange !== undefined && (!affected || affected.length === 0)) {
-    affected = [coordinateId];
+  const prior = state.issues[issueId];
+  if (status === null) {
+    if (!prior) return { state, changed: false };
+    const next = structuredClone(state);
+    delete next.issues[issueId];
+    return { state: next, changed: true };
   }
-  let selectedIssues: string[] | undefined;
-  if (requestedChange !== undefined) {
-    if (
-      !Array.isArray(selectedIssueIds) ||
-      !selectedIssueIds.every((value) => typeof value === "string") ||
-      new Set(selectedIssueIds).size !== selectedIssueIds.length
-    ) {
-      throw new Error("selected issues must be unique manifest issue IDs");
-    }
-    selectedIssues = [...selectedIssueIds].sort();
-    const affectedCaptures = affected!.map((id) => manifest.captures.find((capture) => capture.coordinate_id === id)!);
-    const selectable = new Set(affectedCaptures.flatMap((capture) => capture.issue_ids));
-    if (selectedIssues.some((id) => !selectable.has(id))) throw new Error("selected issue is not part of an affected screenshot");
-    if (!isUsefulReviewerOutcome(requestedChange)) {
-      throw new Error("describe a useful reviewer-approved outcome in at least three words");
-    }
-  }
-
-  const prior = state.captures[coordinateId]!;
-  const priorRequest = prior.requested_change;
-  const trimmed = typeof requestedChange === "string" ? requestedChange.trim() : undefined;
-  const requestUnchanged =
-    trimmed !== undefined &&
-    priorRequest?.requested_change === trimmed &&
-    JSON.stringify(priorRequest.affected_coordinate_ids) === JSON.stringify(affected) &&
-    JSON.stringify(priorRequest.selected_issue_ids) === JSON.stringify(selectedIssues);
-  const noRequestChange = trimmed === undefined && classification === "bad";
-  if (
-    prior.classification === classification &&
-    (requestUnchanged || noRequestChange || (classification !== "bad" && !priorRequest))
-  ) {
+  const trimmedNote = typeof note === "string" ? note.trim() : prior?.note;
+  const nextDecision: IssueReview = {
+    status: status as IssueReviewStatus,
+    ...(trimmedNote ? { note: trimmedNote } : {}),
+    updated_at: now,
+  };
+  if (prior && prior.status === nextDecision.status && (prior.note ?? "") === (nextDecision.note ?? "")) {
     return { state, changed: false };
   }
-
   const next = structuredClone(state);
-  const nextCapture = {
-    coordinate_id: coordinateId,
-    classification: classification as CaptureClassification,
-    updated_at: now,
-    ...(classification === "bad" && trimmed !== undefined
-      ? {
-          requested_change: {
-            request_id: priorRequest?.request_id ?? `vqreq-v1-${coordinateId}`,
-            requested_change: trimmed,
-            authorship: "visual-reviewer" as const,
-            origin_coordinate_id: coordinateId,
-            affected_coordinate_ids: affected!,
-            selected_issue_ids: selectedIssues!,
-            created_at: priorRequest?.created_at ?? now,
-            updated_at: requestUnchanged ? priorRequest!.updated_at : now,
-          },
-        }
-      : classification === "bad" && priorRequest
-        ? { requested_change: priorRequest }
-        : {}),
-  };
-  next.captures[coordinateId] = nextCapture;
+  next.issues[issueId] = nextDecision;
   return { state: next, changed: true };
 }
 

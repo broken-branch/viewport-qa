@@ -4,7 +4,7 @@ Scan a web page at several viewport sizes, catch the layout defects a human woul
 
 ![The Viewport QA screenshot-review interface](docs/assets/review-gui.png)
 
-Viewport QA is a local-first CLI. It renders your page in Playwright Chromium at each viewport, runs rule-based detectors over the painted layout (overflow, clipped text, bad wrapping, low contrast, overlapping elements, unreachable controls, missing fonts…), records console errors, failed requests, and storage writes alongside the visual findings, and writes everything to a report directory. `vqa open` then serves a dark review GUI on loopback where you mark each capture **Looks good** or **Change requested**, and export a readable TXT/PDF handoff for people or an integrity-bound JSON bundle for agents.
+Viewport QA is a local-first CLI. It renders your page in Playwright Chromium at each viewport, runs rule-based detectors over the painted layout (overflow, clipped text, bad wrapping, low contrast, overlapping elements, unreachable controls, missing fonts…), records console errors, failed requests, and storage writes alongside the visual findings, and writes everything to a report directory. `vqa open` then serves a dark review GUI on loopback where you go through the issues one at a time — close-up, exact finding, suggested fix — add the real ones to an export list, dismiss the rest, and hand the list off as readable TXT/PDF for people or an integrity-bound JSON bundle for agents.
 
 No accounts, no telemetry, no AI by default.
 
@@ -26,7 +26,7 @@ vqa scan https://example.com --viewports 390x844,1280x800 --out ./report
 vqa open ./report
 ```
 
-Your system browser opens the review. Filter by page, viewport, or status; click through full-size screenshots and issue crops; mark captures; write what should change; then **Export** a human or AI handoff.
+Your system browser opens the review. Each issue is numbered on its screenshot; click one to see the close-up and exactly what was found, then **Add to export** or **Dismiss**. **Export** turns the list into a human or AI handoff.
 
 Don't want a terminal at all? `vqa launch` opens a start page where you type a URL, pick viewports, and scan from the browser.
 

@@ -16,7 +16,7 @@ const report: Report = {
   formatVersion: "3",
   tool: "viewport-qa",
   toolVersion: PRODUCT_VERSION,
-  schemaVersions: { report: "3", manifest: 1, reviewState: 1 },
+  schemaVersions: { report: "3", manifest: 1, reviewState: 2 },
   url: "file:///supported.html",
   createdAt: "2026-08-23T00:00:00.000Z",
   adapter: { impl: "stub", wired: false },
@@ -39,7 +39,7 @@ describe("report compatibility admission", () => {
 
     const previous = structuredClone(report);
     previous.formatVersion = "2";
-    previous.schemaVersions = { report: "2", manifest: 1, reviewState: 1 };
+    previous.schemaVersions = { report: "2", manifest: 1, reviewState: 2 };
     const previousManifest = structuredClone(manifest);
     previousManifest.source_report.format_version = "2";
     previousManifest.source_report.report_schema_version = "2";

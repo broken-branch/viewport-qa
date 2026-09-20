@@ -299,6 +299,7 @@ export async function buildReviewManifest(
         family!.occurrences!.push({
           capture_coordinate_id: capture.coordinate_id,
           rect: occurrence.rect,
+          message: issue.description,
           semantic_name: occurrence.semanticName,
           technical_locator: occurrence.technicalLocator,
           ...(occurrence.behaviour ? { behaviour: occurrence.behaviour } : {}),
@@ -394,10 +395,8 @@ export async function writeReviewArtifacts(
     schema_version: REVIEW_STATE_SCHEMA_VERSION,
     manifest_id: manifest.manifest_id,
     manifest_sha256: manifestSha256,
-    captures: Object.fromEntries(manifest.captures.map((capture) => [capture.coordinate_id, {
-      coordinate_id: capture.coordinate_id,
-      classification: "unreviewed" as const,
-    }])),
+    issues: {},
+    highlights: {},
   };
   let state = emptyState;
   try {
@@ -407,7 +406,8 @@ export async function writeReviewArtifacts(
       existing.schema_version === REVIEW_STATE_SCHEMA_VERSION &&
       existing.manifest_id === manifest.manifest_id &&
       existing.manifest_sha256 === manifestSha256 &&
-      manifest.captures.every((capture) => existing.captures[capture.coordinate_id])
+      existing.issues && typeof existing.issues === "object" &&
+      existing.highlights && typeof existing.highlights === "object"
     ) state = existing;
   } catch {
     // Fresh scans have no state; malformed copied state is replaced fail-closed.

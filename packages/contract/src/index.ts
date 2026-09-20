@@ -3,7 +3,7 @@ export const REPORT_FORMAT_VERSIONS = ["2", REPORT_FORMAT_VERSION] as const;
 export type ReportFormatVersion = (typeof REPORT_FORMAT_VERSIONS)[number];
 export const AGENT_SUMMARY_SCHEMA_VERSION = 1 as const;
 export const REVIEW_MANIFEST_SCHEMA_VERSION = 1 as const;
-export const REVIEW_STATE_SCHEMA_VERSION = 1 as const;
+export const REVIEW_STATE_SCHEMA_VERSION = 2 as const;
 export { PRODUCT_VERSION } from "./version.js";
 export {
   PRODUCT_CLI_COMMAND,
@@ -416,7 +416,6 @@ export interface Report {
 export type DecisionAction = "approve" | "reject" | "message";
 export interface Decision { issueId: string; action: DecisionAction; message?: string; updatedAt: string }
 export type DecisionsFile = Record<string, Decision>;
-export type CaptureClassification = "unreviewed" | "good" | "bad";
 export type AuditVerdictValue = "PASS" | "FAIL" | "INCOMPLETE";
 export type ReviewAssetMediaType = "image/png" | "image/jpeg";
 export interface ReviewAsset {
@@ -429,6 +428,8 @@ export interface ReviewManifestState { id: string; label: string; arrangement_pr
 export interface ReviewManifestResolution { label: string; width: number; height: number; device_scale_factor: number }
 export interface ReviewManifestOccurrence {
   capture_coordinate_id: string; rect: Rect; semantic_name: string; technical_locator: string;
+  /** The detector's exact finding for this capture, with its measurements. Absent in older manifests. */
+  message?: string;
   crop_asset_id?: string; other_semantic_name?: string; other_technical_locator?: string;
   behaviour?: BehaviourFinding;
 }
@@ -451,49 +452,53 @@ export interface AuditVerdict { value: AuditVerdictValue; policy_id: string; rea
 export interface ReviewManifest {
   artifact_type: "vq-review-manifest"; schema_version: 1; manifest_id: string; run_id: string;
   source_report: { tool: string; tool_version: string; format_version: string; source_sha: string;
-    report_schema_version: ReportFormatVersion; manifest_schema_version: 1; review_state_schema_version: 1 };
+    report_schema_version: ReportFormatVersion; manifest_schema_version: 1; review_state_schema_version: typeof REVIEW_STATE_SCHEMA_VERSION };
   pages: ReviewManifestPage[]; states: ReviewManifestState[]; assets: ReviewAsset[];
   issues: ReviewManifestIssue[]; captures: ReviewManifestCapture[]; audit_verdict: AuditVerdict;
 }
-export interface RequestedChange {
-  request_id: string; requested_change: string; authorship: "visual-reviewer";
-  origin_coordinate_id: string; affected_coordinate_ids: string[]; selected_issue_ids: string[];
-  created_at: string; updated_at: string;
-}
-export interface CaptureReview {
-  coordinate_id: string; classification: CaptureClassification; updated_at?: string;
-  requested_change?: RequestedChange; issue_highlights?: Record<string, Rect | null>;
+/** What the reviewer decided about one manifest issue (a concern across every capture it appears on). */
+export type IssueReviewStatus = "export" | "dismissed";
+export interface IssueReview {
+  status: IssueReviewStatus;
+  /** Optional reviewer-written note carried into the handoff. */
+  note?: string;
+  updated_at: string;
 }
 export interface ReviewState {
-  artifact_type: "vq-review-state"; schema_version: 1; manifest_id: string;
-  manifest_sha256: string; captures: Record<string, CaptureReview>;
+  artifact_type: "vq-review-state"; schema_version: typeof REVIEW_STATE_SCHEMA_VERSION; manifest_id: string;
+  manifest_sha256: string;
+  /** Issue decisions keyed by manifest issue id; an absent issue is still to review. */
+  issues: Record<string, IssueReview>;
+  /** Adjusted highlight rectangles keyed by capture coordinate, then issue id; null removes the highlight. */
+  highlights: Record<string, Record<string, Rect | null>>;
 }
 export interface ExportIdentity {
   export_id: string; exported_at: string; policy_id: "vq-export-identity-v1"; schema_version: 1;
   manifest_sha256: string; review_state_sha256: string;
 }
 export interface PortableBundleAsset { sha256: string; path: string; media_type: ReviewAssetMediaType; byte_length: number }
-export interface PortableBundleIssue {
-  id: string; type: string; severity: Severity; title?: string; semantic_name?: string;
-  confidence?: IssueConfidence; confidence_reasons?: string[]; observed_outcome?: string;
-  acceptance_criterion?: string; affected_coordinate_ids?: string[]; occurrence_count?: number;
-  description: string; selector: string; other_selector?: string; heuristic_suggestion: string;
-  ai_recommendation_status: ReviewManifestIssue["ai_recommendation_status"];
-  crop_asset_sha256?: string; highlight_rect?: Rect; highlight_removed?: true;
-}
-export interface PortableBundleCoordinate {
+/** One capture on which an exported issue appears, with its evidence. */
+export interface PortableBundleOccurrence {
   coordinate_id: string; page: ReviewManifestPage; state: ReviewManifestState;
-  resolution: ReviewManifestResolution; full_screenshot_asset_sha256: string; issues: PortableBundleIssue[];
+  resolution: ReviewManifestResolution; full_screenshot_asset_sha256: string;
+  rect: Rect; highlight_rect?: Rect; highlight_removed?: true; crop_asset_sha256?: string;
+  /** The detector's exact finding for this capture, with its measurements. */
+  message?: string;
+  semantic_name: string; technical_locator: string;
+  other_semantic_name?: string; other_technical_locator?: string; behaviour?: BehaviourFinding;
 }
-export interface PortableBundleRequest {
-  request_id: string; classification: "bad"; requested_change: string; authorship: "visual-reviewer";
-  created_at: string; updated_at: string; origin_coordinate_id: string;
-  affected_coordinates: PortableBundleCoordinate[];
+/** One issue the reviewer put in the export. */
+export interface PortableBundleItem {
+  issue_id: string; type: string; severity: Severity; confidence?: IssueConfidence;
+  confidence_reasons?: string[]; title: string; description: string; observed_outcome?: string;
+  acceptance_criterion?: string; heuristic_suggestion: string;
+  ai_recommendation_status: ReviewManifestIssue["ai_recommendation_status"];
+  reviewer_note?: string; selected_at: string; occurrences: PortableBundleOccurrence[];
 }
 export interface PortableReviewBundle {
-  artifact_type: "viewport-qa-change-request-bundle"; schema_version: 1;
+  artifact_type: "viewport-qa-change-request-bundle"; schema_version: 2;
   export_policy_id: "vq-export-identity-v1"; export_id: string; exported_at: string;
   review_state_sha256: string; source_report: ReviewManifest["source_report"] & {
     manifest_sha256: string; run_id: string };
-  audit_verdict: AuditVerdict; assets: PortableBundleAsset[]; requests: PortableBundleRequest[];
+  audit_verdict: AuditVerdict; assets: PortableBundleAsset[]; items: PortableBundleItem[];
 }

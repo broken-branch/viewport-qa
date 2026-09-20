@@ -10,12 +10,12 @@
 | `screenshots/**` | Full-page PNGs and issue crops | Immutable source evidence |
 | `contact-sheet.html` | Script-free grid of report-local full-page screenshots and viewport labels | Immutable generated evidence index |
 | `report.html` | Self-contained approved GUI generated from report and manifest | Immutable generated evidence |
-| `review-state.json` | Classifications, requested changes, selections, and highlights bound to manifest SHA-256 | Mutable review state |
+| `review-state.json` | Per-issue decisions (in export or dismissed), optional notes, and adjusted highlights, bound to manifest SHA-256 | Mutable review state |
 | `review-settings.json` | Report-service handoff preference | Mutable local setting |
 | `review-export-identities.json` | Stable export identity records | Mutable append-like state |
 | `handoffs/**` or chosen TXT/PDF/JSON | Human or AI handoff output | Derived export |
 
-New reports record the current product version from `version.json`, report format `3`, manifest schema `1`, and review-state schema `1` separately. The compatibility tool identifier remains `viewport-qa`. Format 3 adds structured browser-behaviour findings to the existing `issues` array. Manifest-backed format-2 reports remain openable with their existing review and export behavior, and pre-manifest 0.2-era format-2 reports remain read-only. Reports are not rewritten or migrated when opened.
+New reports record the current product version from `version.json`, report format `3`, manifest schema `1`, and review-state schema `2` separately. The compatibility tool identifier remains `viewport-qa`. Format 3 adds structured browser-behaviour findings to the existing `issues` array. Manifest-backed format-2 reports remain openable with their existing review and export behavior, and pre-manifest 0.2-era format-2 reports remain read-only. Reports are not rewritten or migrated when opened.
 
 Format 3 adds these `Issue.type` and matching `Issue.behaviour.kind` values:
 
@@ -28,6 +28,18 @@ These records retain the same deterministic capture ID, viewport, scenario label
 Each `issues` entry remains the authoritative capture record, with its existing deterministic ID, viewport, rectangle, and screenshot paths. A `groups` entry combines records only when page, optional scenario, issue type, identity fingerprint, and message are identical. Visual identity is the semantic element or unordered element-pair fingerprint. Console identity is the distinct message text, failed-request identity is the recorded URL, local/session storage identity is the storage area/key, and cookie identity is its name plus domain, path, and optional partition key. Thus repeated instances within one capture deduplicate and equal findings across viewport captures present as one group, while equal findings on different pages or scenarios remain separate. A group has a deterministic `group-*` ID, the source `issueIds`, and a plain-language `viewportRange`, such as `fails at 768px, clean at 390px and at 1440px and above`. Clean widths come from the complete viewport matrix for that page. Static HTML presents one card per group while retaining the source records in its embedded report data.
 
 For a named-state scan, optional top-level `scenarios` contains the normalized recipe (label, absolute scenario URL, and steps). Every `viewports` capture, source `issues` record, presentation `groups` record, and successful `pages` entry carries `scenarioLabel`. Each viewport also records `scenarioSteps` in execution order: every route fixture installed before navigation, followed by the click/fill/wait prefix attempted in the page. After a failed interaction it does not claim later page interactions ran. A missing role/name target or an actionability failure produces an accurately worded `scenario-step` issue for that viewport and stops only that scenario attempt. The issue, concern, group, capture, and comparison identities include the label, so equal findings from two states of one URL remain distinct. The review manifest maps labels to states, the HTML review groups and filters captures by those state labels, and `contact-sheet.html` renders one labelled section per state.
+
+## `review-state.json`
+
+Schema 2. `artifact_type` is `vq-review-state`; `manifest_id` and `manifest_sha256` bind the file to the exact manifest bytes. `issues` maps a manifest issue id to `{ status, note?, updated_at }` where `status` is `export` or `dismissed`; an issue absent from the map has no decision yet. `highlights` maps a capture coordinate id to a map of issue id to an adjusted rectangle, or `null` for a removed highlight. Detector rectangles in the manifest are never rewritten.
+
+Each manifest occurrence also carries `message`: the detector's exact finding for that capture, with its measurements. Older manifests without it still open; the review falls back to the issue's summary.
+
+## Handoffs
+
+A Human handoff (TXT or PDF) is a numbered list of the issues in the export, most severe first, each with what was found, where it appears, the element, the reviewer note, the suggested fix, and the report-relative screenshot paths. The PDF embeds a close-up per issue and size.
+
+An AI handoff is a `viewport-qa-change-request-bundle`, schema 2: export identity, source report identity, `assets` (hash-named copies referenced by SHA-256), and `items` — one per exported issue with type, severity, confidence, title, description, suggested fix, `reviewer_note`, `selected_at`, and `occurrences` (per capture: page, state, resolution, detected `rect`, `highlight_rect` or `highlight_removed`, `message`, locators, and the full and crop asset hashes). See the [AI consumption contract](AI-CONSUMPTION.md).
 
 ## `agent-summary.json`
 

@@ -49,7 +49,7 @@ const minimalReport: Report = {
   formatVersion: "2",
   tool: "viewport-qa",
   toolVersion: PRODUCT_VERSION,
-  schemaVersions: { report: "2", manifest: 1, reviewState: 1 },
+  schemaVersions: { report: "2", manifest: 1, reviewState: 2 },
   url: "http://example.test/",
   createdAt: new Date().toISOString(),
   adapter: { impl: "stub", wired: false },
@@ -224,33 +224,25 @@ describe("vqa serve (real binary)", () => {
     expect([403, 404]).toContain(response.status);
   });
 
-  it("persists capture classifications and preserves timestamps on a no-op save", async () => {
+  it("persists issue decisions, keeps timestamps on a no-op save, and clears with null", async () => {
     const endpoint = new URL("api/review", baseUrl);
-    const body = {
-      coordinateId: "page-home--state-default--390x844",
-      classification: "good",
-    };
-    const first = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    const post = (body: unknown) => fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const issueId = "VQ-ISSUE-HOME-LOW-CONTRAST-CTA";
+    const first = await post({ issueId, status: "export", note: "  Make the label readable.  " });
     expect(first.status).toBe(200);
     const firstState = (await first.json()) as ReviewState;
-    const firstTimestamp =
-      firstState.captures[body.coordinateId]!.updated_at;
-    const second = await fetch(endpoint, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const secondState = (await second.json()) as ReviewState;
-    expect(secondState.captures[body.coordinateId]!.classification).toBe(
-      "good",
-    );
-    expect(secondState.captures[body.coordinateId]!.updated_at).toBe(
-      firstTimestamp,
-    );
+    expect(firstState.issues[issueId]).toMatchObject({ status: "export", note: "Make the label readable." });
+    const firstTimestamp = firstState.issues[issueId]!.updated_at;
+    const second = await post({ issueId, status: "export", note: "Make the label readable." });
+    expect(((await second.json()) as ReviewState).issues[issueId]!.updated_at).toBe(firstTimestamp);
+    const dismissed = await post({ issueId, status: "dismissed" });
+    expect(((await dismissed.json()) as ReviewState).issues[issueId]).toMatchObject({ status: "dismissed", note: "Make the label readable." });
+    const cleared = await post({ issueId, status: null });
+    expect(((await cleared.json()) as ReviewState).issues[issueId]).toBeUndefined();
+    expect((await post({ issueId: "UNKNOWN-ISSUE", status: "export" })).status).toBe(400);
+    expect((await post({ issueId, status: "approved" })).status).toBe(400);
+    expect((await post({ issueId, status: "export", note: "x".repeat(2001) })).status).toBe(400);
+    expect(((await (await fetch(endpoint)).json()) as ReviewState).issues[issueId]).toBeUndefined();
   });
 
   it("persists valid issue highlight adjustments and fails closed on invalid geometry", async () => {
@@ -266,12 +258,12 @@ describe("vqa serve (real binary)", () => {
     const adjusted = { x: 24, y: 528, width: 340, height: 80 };
     const saved = await postHighlight(issueId, adjusted);
     expect(saved.status).toBe(200);
-    expect(((await saved.json()) as ReviewState).captures[coordinateId]!.issue_highlights).toEqual({
+    expect(((await saved.json()) as ReviewState).highlights[coordinateId]).toEqual({
       [issueId]: adjusted,
     });
     const removed = await postHighlight(issueId, null);
     expect(removed.status).toBe(200);
-    expect(((await removed.json()) as ReviewState).captures[coordinateId]!.issue_highlights).toEqual({
+    expect(((await removed.json()) as ReviewState).highlights[coordinateId]).toEqual({
       [issueId]: null,
     });
     expect((await postHighlight("UNKNOWN-ISSUE", adjusted)).status).toBe(400);
@@ -279,8 +271,7 @@ describe("vqa serve (real binary)", () => {
       (await postHighlight(issueId, { x: 380, y: 530, width: 40, height: 40 })).status,
     ).toBe(400);
     expect(
-      ((await (await fetch(endpoint)).json()) as ReviewState).captures[coordinateId]!
-        .issue_highlights,
+      ((await (await fetch(endpoint)).json()) as ReviewState).highlights[coordinateId],
     ).toEqual({ [issueId]: null });
     const restored = await postHighlight(issueId, { x: 20, y: 532, width: 350, height: 70 });
     expect(restored.status).toBe(200);
@@ -295,11 +286,11 @@ describe("vqa serve (real binary)", () => {
     const response = await fetch(new URL("api/review", baseUrl), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ coordinateId, classification: "good" }),
+      body: JSON.stringify({ issueId: "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED", status: "export" }),
     });
     expect(response.status).toBe(400);
     expect(await response.text()).toContain("hash or length mismatch");
-    expect(JSON.parse(readFileSync(join(reportDir, "review-state.json"), "utf8")).captures[coordinateId].classification).toBe("unreviewed");
+    expect(JSON.parse(readFileSync(join(reportDir, "review-state.json"), "utf8")).issues["VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED"]).toBeUndefined();
     writeFileSync(assetPath, pristine);
   });
 
@@ -310,7 +301,7 @@ describe("vqa serve (real binary)", () => {
     expect(() => validateReviewManifest(invalid)).toThrow(/misbound full screenshot/u);
   });
 
-  it("exports only the explicitly selected issue from a multi-issue screenshot", async () => {
+  it("exports only the issues the reviewer put in the export", async () => {
     const manifest = JSON.parse(readFileSync(join(reportDir, "review-manifest.json"), "utf8")) as ReviewManifest;
     const candidate = structuredClone(manifest);
     const coordinateId = "page-home--state-alternate--390x844";
@@ -319,6 +310,7 @@ describe("vqa serve (real binary)", () => {
     secondIssue.id = "SECOND-ISSUE";
     secondIssue.title = "Second issue";
     secondIssue.capture_coordinate_ids = [coordinateId];
+    secondIssue.occurrences = secondIssue.occurrences?.filter((occurrence) => occurrence.capture_coordinate_id === coordinateId);
     delete secondIssue.crop_asset_id;
     candidate.issues.push(secondIssue);
     candidate.captures.find((capture) => capture.coordinate_id === coordinateId)!.issue_ids.push("SECOND-ISSUE");
@@ -327,23 +319,11 @@ describe("vqa serve (real binary)", () => {
     const now = new Date().toISOString();
     const state: ReviewState = {
       artifact_type: "vq-review-state",
-      schema_version: 1,
+      schema_version: 2,
       manifest_id: candidate.manifest_id,
       manifest_sha256: manifestSha256,
-      captures: Object.fromEntries(candidate.captures.map((capture) => [capture.coordinate_id, {
-        coordinate_id: capture.coordinate_id,
-        classification: capture.coordinate_id === coordinateId ? "bad" : "unreviewed",
-        ...(capture.coordinate_id === coordinateId ? { requested_change: {
-          request_id: `vqreq-v1-${coordinateId}`,
-          requested_change: "Fix only the selected issue",
-          authorship: "visual-reviewer",
-          origin_coordinate_id: coordinateId,
-          affected_coordinate_ids: [coordinateId],
-          selected_issue_ids: [originalIssue.id],
-          created_at: now,
-          updated_at: now,
-        } } : {}),
-      }])),
+      issues: { [originalIssue.id]: { status: "export", updated_at: now }, "SECOND-ISSUE": { status: "dismissed", updated_at: now } },
+      highlights: {},
     };
     const digest = reviewStateSha256(candidate, manifestSha256, state);
     const result = await createPortableBundle({
@@ -361,123 +341,33 @@ describe("vqa serve (real binary)", () => {
         review_state_sha256: digest,
       },
     });
-    expect(result.bundle.requests[0]!.affected_coordinates[0]!.issues.map((issue) => issue.id)).toEqual([
-      originalIssue.id,
-    ]);
+    expect(result.bundle.items.map((item) => item.issue_id)).toEqual([originalIssue.id]);
   });
 
-  it("rejects unknown and duplicate affected coordinates without changing review data", async () => {
-    const before = await (
-      await fetch(new URL("api/review", baseUrl))
-    ).text();
-    const unknown = await fetch(new URL("api/review", baseUrl), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        coordinateId: "outside-manifest",
-        classification: "bad",
-      }),
-    });
-    expect(unknown.status).toBe(400);
-    const duplicate = await fetch(new URL("api/review", baseUrl), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        coordinateId: "page-home--state-alternate--390x844",
-        classification: "bad",
-        requestedChange: "Increase contrast.",
-        affectedCoordinateIds: [
-          "page-home--state-alternate--390x844",
-          "page-home--state-alternate--390x844",
-        ],
-      }),
-    });
-    expect(duplicate.status).toBe(400);
-    expect(await (await fetch(new URL("api/review", baseUrl))).text()).toBe(
-      before,
-    );
-  });
-
-  it("accepts zero, one, or multiple applicable detected issues only with reviewer-authored outcomes", async () => {
-    const endpoint = new URL("api/review", baseUrl);
-    const coordinateId = "page-home--state-alternate--390x844";
-    const checkoutId = "page-checkout--state-alternate--390x844";
-    const postSelection = (affectedCoordinateIds: string[], selectedIssueIds: string[], requestedChange = "Increase contrast and leave enough room for the total.") =>
-      fetch(endpoint, {
+  it("rejects malformed decisions without changing review data", async () => {
+    const before = await (await fetch(new URL("api/review", baseUrl))).text();
+    for (const body of [
+      { issueId: "outside-manifest", status: "export" },
+      { issueId: "VQ-ISSUE-HOME-LOW-CONTRAST-CTA" },
+      { issueId: "VQ-ISSUE-HOME-LOW-CONTRAST-CTA", status: "export", note: 42 },
+      { coordinateId: "page-home--state-alternate--390x844", highlightIssueId: "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED", highlightRect: null },
+    ]) {
+      const response = await fetch(new URL("api/review", baseUrl), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          coordinateId,
-          classification: "bad",
-          requestedChange,
-          affectedCoordinateIds,
-          selectedIssueIds,
-        }),
+        body: JSON.stringify(body),
       });
-
-    const zero = await postSelection([coordinateId], []);
-    expect(zero.status).toBe(200);
-    expect(((await zero.json()) as ReviewState).captures[coordinateId]!.requested_change!.selected_issue_ids).toEqual([]);
-
-    const neither = await postSelection([coordinateId], [], "");
-    expect(neither.status).toBe(400);
-    expect(await neither.text()).toContain("reviewer-approved outcome");
-
-    const issueOnly = await postSelection([coordinateId], ["VQ-ISSUE-HOME-LOW-CONTRAST-CTA"], "");
-    expect(issueOnly.status).toBe(400);
-    expect(await issueOnly.text()).toContain("reviewer-approved outcome");
-
-    const one = await postSelection([coordinateId], ["VQ-ISSUE-HOME-LOW-CONTRAST-CTA"]);
-    expect(one.status).toBe(200);
-    expect(((await one.json()) as ReviewState).captures[coordinateId]!.requested_change!.selected_issue_ids).toEqual([
-      "VQ-ISSUE-HOME-LOW-CONTRAST-CTA",
-    ]);
-
-    const selected = [
-      "VQ-ISSUE-HOME-LOW-CONTRAST-CTA",
-      "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED",
-    ];
-    const multiple = await postSelection([coordinateId, checkoutId], selected);
-    expect(multiple.status).toBe(200);
-    const multipleState = (await multiple.json()) as ReviewState;
-    expect(multipleState.captures[coordinateId]!.requested_change!.selected_issue_ids).toEqual([
-      "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED",
-      "VQ-ISSUE-HOME-LOW-CONTRAST-CTA",
-    ]);
-
-    const inapplicable = await postSelection([coordinateId], [
-      "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED",
-    ]);
-    expect(inapplicable.status).toBe(400);
-    expect(await inapplicable.text()).toContain("not part of an affected screenshot");
-    const unknown = await postSelection([coordinateId], ["UNKNOWN-ISSUE"]);
-    expect(unknown.status).toBe(400);
-    expect(await unknown.text()).toContain("not part of an affected screenshot");
-    expect((await (await fetch(endpoint)).json()).captures[coordinateId].requested_change.selected_issue_ids).toEqual(
-      multipleState.captures[coordinateId]!.requested_change!.selected_issue_ids,
-    );
+      expect(response.status, JSON.stringify(body)).toBe(400);
+    }
+    expect(await (await fetch(new URL("api/review", baseUrl))).text()).toBe(before);
   });
 
-  it("fails closed when persisted review state contains an empty request with no attached issue", async () => {
+  it("fails closed when persisted review state references an unknown issue", async () => {
     const statePath = join(reportDir, "review-state.json");
     const original = readFileSync(statePath);
     try {
       const malformed = JSON.parse(original.toString()) as ReviewState;
-      const coordinateId = "page-home--state-alternate--390x844";
-      malformed.captures[coordinateId] = {
-        coordinate_id: coordinateId,
-        classification: "bad",
-        requested_change: {
-          request_id: `vqreq-v1-${coordinateId}`,
-          requested_change: "",
-          authorship: "visual-reviewer",
-          origin_coordinate_id: coordinateId,
-          affected_coordinate_ids: [coordinateId],
-          selected_issue_ids: [],
-          created_at: "2026-08-23T12:00:00.000Z",
-          updated_at: "2026-08-23T12:00:00.000Z",
-        },
-      };
+      malformed.issues["NOT-IN-MANIFEST"] = { status: "export", updated_at: "2026-08-23T12:00:00.000Z" };
       writeFileSync(statePath, `${JSON.stringify(malformed)}\n`);
       const response = await fetch(new URL("api/review", baseUrl));
       expect(response.status).toBe(500);
@@ -489,18 +379,19 @@ describe("vqa serve (real binary)", () => {
 
   it("generates and safely saves independent Human and AI handoff formats", async () => {
     const exportEndpoint = new URL("api/export", baseUrl);
-    const issueOnly = await fetch(new URL("api/review", baseUrl), {
+    const empty = await fetch(exportEndpoint, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        coordinateId: "page-home--state-alternate--390x844",
-        classification: "bad",
-        requestedChange: "Increase the primary action contrast.",
-        affectedCoordinateIds: ["page-home--state-alternate--390x844"],
-        selectedIssueIds: ["VQ-ISSUE-HOME-LOW-CONTRAST-CTA"],
-      }),
+      body: JSON.stringify({ mode: "generate", audience: "human" }),
     });
-    expect(issueOnly.status).toBe(200);
+    expect(empty.status).toBe(400);
+    expect(await empty.text()).toContain("nothing is in the export yet");
+    const selected = await fetch(new URL("api/review", baseUrl), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ issueId: "VQ-ISSUE-HOME-LOW-CONTRAST-CTA", status: "export", note: "Increase the primary action contrast." }),
+    });
+    expect(selected.status).toBe(200);
     const generate = async (audience: "human" | "ai") => {
       const response = await fetch(exportEndpoint, {
         method: "POST",
@@ -517,24 +408,20 @@ describe("vqa serve (real binary)", () => {
     const human = await generate("human");
     expect(human.audience).toBe("human");
     expect(human.export_id).toBeUndefined();
-    expect(human.content).toContain("VISUAL QA HANDOFF");
-    expect(human.content).toContain("REVIEWER-APPROVED WORK");
-    expect(human.content).toContain("Requested outcome\nIncrease the primary action contrast.");
-    expect(human.content).toContain("MACHINE SUGGESTIONS — NOT APPROVED WORK");
+    expect(human.content).toContain("VIEWPORT QA HANDOFF");
+    expect(human.content).toContain("1 issue selected by the reviewer.");
+    expect(human.content).toContain("1. Primary action is hard to read");
+    expect(human.content).toContain("Reviewer note: Increase the primary action contrast.");
     expect(human.content).not.toMatch(/[#*_`]/u);
-    expect(human.content).not.toMatch(/VQ-|audit|hash|policy|reason code|selector|schema|format|version/iu);
+    expect(human.content).not.toMatch(/VQ-|audit|hash|policy|reason code|schema|format|version/iu);
 
     const ai = await generate("ai");
     expect(ai.audience).toBe("ai");
     expect(JSON.parse(ai.content).export_id).toBe(ai.export_id);
-    expect(JSON.parse(ai.content).requests[0].requested_change).toBe("Increase the primary action contrast.");
-    const attached = JSON.parse(ai.content).requests
-      .flatMap((request: { affected_coordinates: Array<{ issues: Array<{ id: string }> }> }) =>
-        request.affected_coordinates.flatMap((coordinate) => coordinate.issues.map((issue) => issue.id)),
-      );
-    expect(new Set(attached)).toEqual(
-      new Set(["VQ-ISSUE-HOME-LOW-CONTRAST-CTA"]),
-    );
+    const parsedBundle = JSON.parse(ai.content) as PortableReviewBundle;
+    expect(parsedBundle.schema_version).toBe(2);
+    expect(parsedBundle.items.map((item) => item.issue_id)).toEqual(["VQ-ISSUE-HOME-LOW-CONTRAST-CTA"]);
+    expect(parsedBundle.items[0]!.reviewer_note).toBe("Increase the primary action contrast.");
 
     const humanPath = join(reportDir, "human-handoff.txt");
     const pdfPath = join(reportDir, "human-handoff.pdf");
@@ -582,30 +469,19 @@ describe("vqa serve (real binary)", () => {
     expect(pdfStructure).toMatch(/\/Width\s+390\b[\s\S]{0,160}\/Height\s+844\b/u);
     expect(pdfStructure).toContain("%%EOF");
     const searchablePdfText = extractChromiumPdfText(pdfBytes).replace(/[^\p{L}\p{N}]+/gu, " ");
-    expect(searchablePdfText).toContain("VISUAL QA HANDOFF");
-    expect(searchablePdfText).not.toMatch(/\bVQ\b|audit|hash|policy|reason code|selector|schema|format|version/iu);
+    expect(searchablePdfText).toContain("VIEWPORT QA HANDOFF");
+    expect(searchablePdfText).not.toMatch(/\bVQ\b|audit|hash|policy|reason code|schema|format|version/iu);
   });
 
   it("reuses the reserved export identity after an asset failure and emits a byte-stable portable bundle", async () => {
-    const coordinateId = "page-checkout--state-alternate--390x844";
-    const reviewResponse = await fetch(new URL("api/review", baseUrl), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        coordinateId,
-        classification: "bad",
-        requestedChange: "Give the total enough width to show the full amount.",
-        affectedCoordinateIds: [
-          coordinateId,
-          "page-home--state-alternate--390x844",
-        ],
-        selectedIssueIds: [
-          "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED",
-          "VQ-ISSUE-HOME-LOW-CONTRAST-CTA",
-        ],
-      }),
-    });
-    expect(reviewResponse.status).toBe(200);
+    for (const issueId of ["VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED", "VQ-ISSUE-HOME-LOW-CONTRAST-CTA"]) {
+      const reviewResponse = await fetch(new URL("api/review", baseUrl), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ issueId, status: "export" }),
+      });
+      expect(reviewResponse.status).toBe(200);
+    }
 
     const assetPath = join(
       reportDir,
@@ -637,8 +513,9 @@ describe("vqa serve (real binary)", () => {
     const firstJson = readFileSync(firstReceipt.json_path);
     const bundle = JSON.parse(firstJson.toString("utf8")) as PortableReviewBundle;
     expect(bundle.export_policy_id).toBe("vq-export-identity-v1");
-    expect(bundle.requests[0]!.affected_coordinates).toHaveLength(2);
-    expect(bundle.assets).toHaveLength(3);
+    expect(bundle.items.map((item) => item.issue_id)).toEqual(["VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED", "VQ-ISSUE-HOME-LOW-CONTRAST-CTA"]);
+    expect(bundle.items.flatMap((item) => item.occurrences)).toHaveLength(4);
+    expect(bundle.assets).toHaveLength(5);
     for (const asset of bundle.assets) {
       expect(asset.path).toMatch(/^assets\/[0-9a-f]{64}\.(png|jpg)$/);
       expect(readFileSync(join(firstReceipt.json_path, "..", asset.path)))

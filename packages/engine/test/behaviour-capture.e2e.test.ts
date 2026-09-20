@@ -221,16 +221,14 @@ describe("scan behaviour capture", () => {
       const reviewPage = await browser.newPage();
       await reviewPage.goto(new URL(`file://${join(outDir, "report.html")}`).href);
       await expect.poll(() => reviewPage.locator("[data-capture]").count()).toBe(2);
-      await reviewPage.locator("[data-capture]").first()
-        .getByRole("button", { name: /View Concern|Review Suggestions/u }).click();
-      expect(await reviewPage.getByRole("heading", { name: "Visual", exact: true }).count()).toBe(1);
-      expect(await reviewPage.getByRole("heading", { name: "Behaviour", exact: true }).count()).toBe(1);
-      const behaviourSummaries = await reviewPage.locator("#drawerBody details.issue-box summary")
-        .allTextContents();
-      expect(behaviourSummaries.some((text) => text.includes("Request to") && text.includes("expected-503")))
-        .toBe(true);
-      expect(await reviewPage.locator("#drawerBody details.issue-box", { hasText: "visual concern" }).count())
-        .toBe(0);
+      const firstCard = reviewPage.locator("[data-capture]").first();
+      const rowTitles = await firstCard.locator(".issue-row .issue-open").allTextContents();
+      expect(rowTitles.some((text) => text.includes("Request to") && text.includes("expected-503"))).toBe(true);
+      expect(rowTitles.some((text) => text.includes("visual concern"))).toBe(false);
+      await firstCard.locator(".issue-row", { hasText: "expected-503" }).locator(".issue-open").click();
+      await expect.poll(() => reviewPage.locator("#drawer[open]").count()).toBe(1);
+      expect(await reviewPage.locator("#drawerTitle").innerText()).toContain("expected-503");
+      expect(await reviewPage.locator("#drawerBody").innerText()).toContain("Evidence");
     } finally {
       await browser.close();
     }
@@ -415,9 +413,8 @@ describe("scan behaviour capture", () => {
       await reviewPage.goto(new URL(`file://${join(outDir, "report.html")}`).href);
       await expect.poll(() => reviewPage.locator("[data-capture]").count()).toBe(1);
       await reviewPage.locator("[data-capture]").first()
-        .getByRole("button", { name: /View Concern|Review Suggestions/u }).click();
-      await reviewPage.locator("#drawerBody details.issue-box", { hasText: "same-url" })
-        .getByText("Occurrences (2)").click();
+        .locator(".issue-row", { hasText: "same-url" }).locator(".issue-open").click();
+      await expect.poll(() => reviewPage.locator("#drawer[open]").count()).toBe(1);
       expect(await reviewPage.locator("#drawerBody").innerText())
         .toContain(`POST ${origin}/same-url answered 503`);
     } finally {

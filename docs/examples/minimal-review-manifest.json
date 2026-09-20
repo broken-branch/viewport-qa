@@ -10,7 +10,7 @@
     "source_sha": "source-checkout",
     "report_schema_version": "2",
     "manifest_schema_version": 1,
-    "review_state_schema_version": 1
+    "review_state_schema_version": 2
   },
   "pages": [],
   "states": [],

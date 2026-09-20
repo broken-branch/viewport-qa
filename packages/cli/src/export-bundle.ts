@@ -13,13 +13,16 @@ import {
 import { basename, isAbsolute, join, resolve, sep } from "node:path";
 import { isLinkFreeExistingPath, renderHumanHandoffPdf } from "@vqa/engine";
 import type {
-  CaptureReview,
   ExportIdentity,
+  IssueReview,
   PortableBundleAsset,
-  PortableBundleCoordinate,
+  PortableBundleItem,
+  PortableBundleOccurrence,
   PortableReviewBundle,
+  Rect,
   ReviewAsset,
   ReviewManifest,
+  ReviewManifestIssue,
   ReviewState,
 } from "@vqa/contract";
 
@@ -50,38 +53,29 @@ function reviewProjection(
   manifestSha256: string,
   state: ReviewState,
 ): unknown {
-  const captures = Object.values(state.captures)
-    .map((capture) => ({
-      coordinate_id: capture.coordinate_id,
-      classification: capture.classification,
-      ...(capture.updated_at ? { updated_at: capture.updated_at } : {}),
-      ...(capture.issue_highlights ? { issue_highlights: capture.issue_highlights } : {}),
-      ...(capture.requested_change
-        ? {
-            requested_change: {
-              ...capture.requested_change,
-              affected_coordinate_ids: [
-                ...capture.requested_change.affected_coordinate_ids,
-              ].sort(),
-              selected_issue_ids: [...capture.requested_change.selected_issue_ids].sort(),
-            },
-          }
-        : {}),
+  const issues = Object.entries(state.issues)
+    .map(([issueId, decision]) => ({
+      issue_id: issueId,
+      status: decision.status,
+      ...(decision.note ? { note: decision.note } : {}),
+      updated_at: decision.updated_at,
     }))
+    .sort((left, right) => left.issue_id.localeCompare(right.issue_id));
+  const highlights = Object.entries(state.highlights)
+    .map(([coordinateId, byIssue]) => ({ coordinate_id: coordinateId, issue_highlights: byIssue }))
     .sort((left, right) => left.coordinate_id.localeCompare(right.coordinate_id));
   const referenced = new Set<string>();
-  for (const capture of captures) {
-    if (!capture.requested_change) continue;
-    for (const coordinateId of capture.requested_change.affected_coordinate_ids) {
-      const coordinate = manifest.captures.find(
-        (candidate) => candidate.coordinate_id === coordinateId,
-      );
-      if (!coordinate) continue;
-      referenced.add(coordinate.full_asset_id);
-      for (const issueId of coordinate.issue_ids) {
-        const issue = manifest.issues.find((candidate) => candidate.id === issueId);
-        if (issue?.crop_asset_id) referenced.add(issue.crop_asset_id);
-      }
+  for (const { issue_id: issueId, status } of issues) {
+    if (status !== "export") continue;
+    const issue = manifest.issues.find((candidate) => candidate.id === issueId);
+    if (!issue) continue;
+    for (const coordinateId of issue.capture_coordinate_ids) {
+      const capture = manifest.captures.find((candidate) => candidate.coordinate_id === coordinateId);
+      if (capture) referenced.add(capture.full_asset_id);
+    }
+    if (issue.crop_asset_id) referenced.add(issue.crop_asset_id);
+    for (const occurrence of issue.occurrences ?? []) {
+      if (occurrence.crop_asset_id) referenced.add(occurrence.crop_asset_id);
     }
   }
   const assets = manifest.assets
@@ -94,12 +88,13 @@ function reviewProjection(
     .sort((left, right) => left.sha256.localeCompare(right.sha256));
   return {
     export_policy_id: EXPORT_POLICY_ID,
-    export_schema_version: 1,
+    export_schema_version: 2,
     manifest_id: manifest.manifest_id,
     manifest_sha256: manifestSha256,
     source_report: manifest.source_report,
     audit_verdict: manifest.audit_verdict,
-    captures,
+    issues,
+    highlights,
     assets,
   };
 }
@@ -317,95 +312,92 @@ export async function validateCaptureAsset(
   return source;
 }
 
-function coordinateFor(
-  manifest: ReviewManifest,
-  reviewState: ReviewState,
-  coordinateId: string,
-  selectedIssueIds: Set<string>,
-): PortableBundleCoordinate {
-  const capture = manifest.captures.find(
-    (candidate) => candidate.coordinate_id === coordinateId,
-  );
-  if (!capture) throw new Error(`unknown coordinate: ${coordinateId}`);
-  const page = manifest.pages.find((candidate) => candidate.id === capture.page_id);
-  const state = manifest.states.find((candidate) => candidate.id === capture.state_id);
-  const screenshot = manifest.assets.find(
-    (candidate) => candidate.id === capture.full_asset_id,
-  );
-  if (!page || !state || !screenshot || screenshot.kind !== "full-screenshot") {
-    throw new Error(`incomplete coordinate context: ${coordinateId}`);
-  }
-  const issues = capture.issue_ids.filter((issueId) => selectedIssueIds.has(issueId)).map((issueId) => {
-    const issue = manifest.issues.find((candidate) => candidate.id === issueId);
-    if (!issue) throw new Error(`unknown issue: ${issueId}`);
-    const occurrenceCropId = issue.occurrences?.find(
-      (occurrence) => occurrence.capture_coordinate_id === coordinateId && occurrence.crop_asset_id,
-    )?.crop_asset_id;
-    const fallbackCropId = issue.crop_asset_id && manifest.assets.find(
-      (candidate) => candidate.id === issue.crop_asset_id && candidate.coordinate_id === coordinateId,
-    ) ? issue.crop_asset_id : undefined;
-    const cropId = occurrenceCropId ?? fallbackCropId;
-    const crop = cropId
-      ? manifest.assets.find((candidate) => candidate.id === cropId)
-      : undefined;
-    if (cropId && !crop) throw new Error(`unknown crop asset: ${cropId}`);
-    const overrides = reviewState.captures[coordinateId]?.issue_highlights;
-    const hasOverride = Boolean(overrides && Object.prototype.hasOwnProperty.call(overrides, issueId));
-    const override = hasOverride ? overrides![issueId] : undefined;
-    if (override && (!Number.isFinite(override.x) || !Number.isFinite(override.y) || !Number.isFinite(override.width) || !Number.isFinite(override.height) || override.x < 0 || override.y < 0 || override.width < 16 || override.height < 16 || override.x + override.width > capture.resolution.width || override.y + override.height > capture.resolution.height)) {
-      throw new Error(`invalid issue highlight: ${issueId} on ${coordinateId}`);
-    }
-    const detected = issue.rects?.[coordinateId];
-    const highlight = override === null ? null : override ?? (detected ? {
-      x: Math.max(0, detected.x - 8),
-      y: Math.max(0, detected.y - 8),
-      width: Math.min(capture.resolution.width, detected.x + detected.width + 8) - Math.max(0, detected.x - 8),
-      height: Math.min(capture.resolution.height, detected.y + detected.height + 8) - Math.max(0, detected.y - 8),
-    } : undefined);
-    return {
-      id: issue.id,
-      type: issue.type,
-      severity: issue.severity,
-      title: issue.title,
-      ...(issue.semantic_name ? { semantic_name: issue.semantic_name } : {}),
-      ...(issue.confidence ? { confidence: issue.confidence } : {}),
-      ...(issue.confidence_reasons ? { confidence_reasons: issue.confidence_reasons } : {}),
-      ...(issue.observed_outcome ? { observed_outcome: issue.observed_outcome } : {}),
-      ...(issue.acceptance_criterion ? { acceptance_criterion: issue.acceptance_criterion } : {}),
-      affected_coordinate_ids: issue.capture_coordinate_ids,
-      ...(issue.occurrence_count ? { occurrence_count: issue.occurrence_count } : {}),
-      description: issue.description,
-      selector: issue.selector,
-      ...(issue.other_selector ? { other_selector: issue.other_selector } : {}),
-      heuristic_suggestion: issue.heuristic_suggestion,
-      ai_recommendation_status: issue.ai_recommendation_status,
-      ...(crop ? { crop_asset_sha256: crop.sha256 } : {}),
-      ...(highlight ? { highlight_rect: highlight } : {}),
-      ...(override === null ? { highlight_removed: true as const } : {}),
-    };
-  });
+/** Pads a detected rectangle for a highlight, clamped to the capture. */
+function paddedHighlight(detected: Rect, width: number, height: number): Rect {
+  const x = Math.max(0, detected.x - 8);
+  const y = Math.max(0, detected.y - 8);
   return {
-    coordinate_id: coordinateId,
-    page,
-    state,
-    resolution: capture.resolution,
-    full_screenshot_asset_sha256: screenshot.sha256,
-    issues,
+    x,
+    y,
+    width: Math.min(width, detected.x + detected.width + 8) - x,
+    height: Math.min(height, detected.y + detected.height + 8) - y,
   };
 }
 
-function requestedReviews(state: ReviewState): CaptureReview[] {
-  const requests = Object.values(state.captures)
-    .filter((capture) => capture.classification === "bad" && capture.requested_change)
-    .sort((left, right) => left.coordinate_id.localeCompare(right.coordinate_id));
-  if (requests.length === 0) throw new Error("no complete change requests to export");
-  return requests;
+/** Every capture an issue appears on, with the evidence for that capture. */
+function occurrencesFor(
+  manifest: ReviewManifest,
+  reviewState: ReviewState,
+  issue: ReviewManifestIssue,
+): PortableBundleOccurrence[] {
+  const byWidth = (coordinateId: string): number =>
+    manifest.captures.find((candidate) => candidate.coordinate_id === coordinateId)?.resolution.width ?? 0;
+  return [...issue.capture_coordinate_ids].sort((left, right) => byWidth(left) - byWidth(right) || left.localeCompare(right)).map((coordinateId) => {
+    const capture = manifest.captures.find((candidate) => candidate.coordinate_id === coordinateId);
+    if (!capture) throw new Error(`unknown coordinate: ${coordinateId}`);
+    const page = manifest.pages.find((candidate) => candidate.id === capture.page_id);
+    const state = manifest.states.find((candidate) => candidate.id === capture.state_id);
+    const screenshot = manifest.assets.find((candidate) => candidate.id === capture.full_asset_id);
+    if (!page || !state || !screenshot || screenshot.kind !== "full-screenshot") {
+      throw new Error(`incomplete coordinate context: ${coordinateId}`);
+    }
+    const occurrence = issue.occurrences?.find((candidate) => candidate.capture_coordinate_id === coordinateId);
+    const cropId = occurrence?.crop_asset_id ?? (issue.crop_asset_id && manifest.assets.some(
+      (candidate) => candidate.id === issue.crop_asset_id && candidate.coordinate_id === coordinateId,
+    ) ? issue.crop_asset_id : undefined);
+    const crop = cropId ? manifest.assets.find((candidate) => candidate.id === cropId) : undefined;
+    if (cropId && !crop) throw new Error(`unknown crop asset: ${cropId}`);
+    const overrides = reviewState.highlights[coordinateId];
+    const hasOverride = Boolean(overrides && Object.prototype.hasOwnProperty.call(overrides, issue.id));
+    const override = hasOverride ? overrides![issue.id] : undefined;
+    if (override && (!Number.isFinite(override.x) || !Number.isFinite(override.y) || !Number.isFinite(override.width) || !Number.isFinite(override.height) || override.x < 0 || override.y < 0 || override.width < 16 || override.height < 16 || override.x + override.width > capture.resolution.width || override.y + override.height > capture.resolution.height)) {
+      throw new Error(`invalid issue highlight: ${issue.id} on ${coordinateId}`);
+    }
+    const detected = occurrence?.rect ?? issue.rects?.[coordinateId];
+    if (!detected) throw new Error(`issue has no rectangle on capture: ${issue.id} on ${coordinateId}`);
+    const highlight = override === null
+      ? null
+      : override ?? paddedHighlight(detected, capture.resolution.width, capture.resolution.height);
+    return {
+      coordinate_id: coordinateId,
+      page,
+      state,
+      resolution: capture.resolution,
+      full_screenshot_asset_sha256: screenshot.sha256,
+      rect: detected,
+      ...(occurrence?.message ? { message: occurrence.message } : {}),
+      ...(highlight ? { highlight_rect: highlight } : {}),
+      ...(override === null ? { highlight_removed: true as const } : {}),
+      ...(crop ? { crop_asset_sha256: crop.sha256 } : {}),
+      semantic_name: occurrence?.semantic_name ?? issue.semantic_name ?? issue.title,
+      technical_locator: occurrence?.technical_locator ?? issue.technical_locator ?? issue.selector,
+      ...(occurrence?.other_semantic_name ? { other_semantic_name: occurrence.other_semantic_name } : {}),
+      ...(occurrence?.other_technical_locator ? { other_technical_locator: occurrence.other_technical_locator } : {}),
+      ...(occurrence?.behaviour ? { behaviour: occurrence.behaviour } : {}),
+    };
+  });
 }
 
-export function isUsefulReviewerOutcome(value: unknown): value is string {
-  if (typeof value !== "string") return false;
-  const trimmed = value.trim();
-  return trimmed.length >= 12 && trimmed.split(/\s+/u).filter(Boolean).length >= 3 && /[a-z]/iu.test(trimmed);
+/** The issues the reviewer put in the export, in a stable order, with their decisions. */
+function exportedIssues(
+  manifest: ReviewManifest,
+  state: ReviewState,
+): { issue: ReviewManifestIssue; decision: IssueReview }[] {
+  const selected = Object.entries(state.issues)
+    .filter(([, decision]) => decision.status === "export")
+    .map(([issueId, decision]) => {
+      const issue = manifest.issues.find((candidate) => candidate.id === issueId);
+      if (!issue) throw new Error(`unknown issue in review state: ${issueId}`);
+      return { issue, decision };
+    })
+    .sort((left, right) => severityRank(left.issue) - severityRank(right.issue) || left.issue.title.localeCompare(right.issue.title) || left.issue.id.localeCompare(right.issue.id));
+  if (selected.length === 0) throw new Error("nothing is in the export yet: open an issue and choose Add to export");
+  return selected;
+}
+
+const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 } as const;
+function severityRank(issue: ReviewManifestIssue): number {
+  return SEVERITY_ORDER[issue.severity] ?? 3;
 }
 
 function containsTechnicalLocator(value: string, issue: ReviewManifest["issues"][number]): boolean {
@@ -422,14 +414,26 @@ function boundedHumanText(value: string, maximum: number): string {
     : `${normalized.slice(0, maximum - 1).trimEnd()}…`;
 }
 
+/**
+ * "Concern — subject". Manifest titles read "<subject>: <concern>"; the
+ * concern is what a reader scans for, so it leads, and the subject (the
+ * element's accessible name or text) follows when it is human-readable.
+ */
 function humanIssueTitle(issue: ReviewManifest["issues"][number]): string {
-  if (issue.title.trim() && !containsTechnicalLocator(issue.title, issue)) {
-    return boundedHumanText(issue.title, 110);
+  const title = issue.title.trim();
+  const subject = issue.semantic_name?.trim() && !containsTechnicalLocator(issue.semantic_name, issue)
+    ? boundedHumanText(issue.semantic_name, 70)
+    : "";
+  const separator = title.lastIndexOf(": ");
+  if (separator > 0 && (containsTechnicalLocator(title.slice(0, separator), issue) || issue.semantic_name?.trim().startsWith(title.slice(0, separator).replace(/…$/u, "")))) {
+    const concern = title.slice(separator + 2);
+    const lead = concern.charAt(0).toUpperCase() + concern.slice(1);
+    return subject ? `${lead} — ${subject}` : lead;
   }
-  if (issue.semantic_name?.trim() && !containsTechnicalLocator(issue.semantic_name, issue)) {
-    return boundedHumanText(`${issue.semantic_name.trim()}: visual concern`, 110);
-  }
-  return `${issue.type.replace(/-/gu, " ")}: visual concern`;
+  if (title && !containsTechnicalLocator(title, issue)) return boundedHumanText(title, 110);
+  const lead = issue.type.replace(/-/gu, " ");
+  const capitalized = lead.charAt(0).toUpperCase() + lead.slice(1);
+  return subject ? `${capitalized} — ${subject}` : capitalized;
 }
 
 function safeHumanIssueText(
@@ -449,80 +453,57 @@ export interface HumanHandoffContentOptions {
   reviewState: ReviewState;
 }
 
+function confidenceLabel(issue: ReviewManifestIssue): string {
+  const confidence = issue.confidence ?? (issue.severity === "high" ? "high" : "needs-confirmation");
+  return confidence === "high" ? "likely a real defect" : confidence === "likely-noise" ? "possibly noise" : "needs visual confirmation";
+}
+
 export function createHumanHandoffContent(options: HumanHandoffContentOptions): string {
   const { manifest, reviewState } = options;
   validateReviewManifest(manifest);
-  const requests = requestedReviews(reviewState);
-  const lines = ["VISUAL QA HANDOFF", "", "REVIEWER-APPROVED WORK", ""];
-  requests.forEach((captureReview, index) => {
-    const request = captureReview.requested_change!;
-    if(!isUsefulReviewerOutcome(request.requested_change)||request.affected_coordinate_ids.length===0)throw new Error(`a useful reviewer-authored outcome is required: ${captureReview.coordinate_id}`);
-    const affected = request.affected_coordinate_ids.map((coordinateId) => {
-      const capture = manifest.captures.find((candidate) => candidate.coordinate_id === coordinateId);
-      if (!capture) throw new Error(`unknown coordinate: ${coordinateId}`);
-      return capture;
+  const selected = exportedIssues(manifest, reviewState);
+  const lines = ["VIEWPORT QA HANDOFF", ""];
+  const pages = manifest.pages.slice().sort((left, right) => left.label.localeCompare(right.label) || left.url.localeCompare(right.url));
+  lines.push(`${selected.length} issue${selected.length === 1 ? "" : "s"} selected by the reviewer.`, "");
+  pages.forEach((page) => {
+    lines.push(`Page: ${page.label}`, `Source: ${page.url}`);
+  });
+  lines.push("");
+  selected.forEach(({ issue, decision }, index) => {
+    const occurrences = occurrencesFor(manifest, reviewState, issue);
+    const title = humanIssueTitle(issue);
+    const observed = occurrences.find((occurrence) => occurrence.message)?.message ?? safeHumanIssueText(
+      issue.observed_outcome ?? issue.description,
+      issue,
+      issue.description,
+      title,
+    );
+    const where = occurrences.map((occurrence) => {
+      const scenario = occurrence.state.arrangement_provenance === "scenario-recipe" ? `, ${occurrence.state.label}` : "";
+      return `${occurrence.page.label}${scenario} at ${occurrence.resolution.label}`;
     });
-    const applicable = new Set(affected.flatMap((capture) => capture.issue_ids));
-    if (
-      new Set(request.selected_issue_ids).size !== request.selected_issue_ids.length ||
-      request.selected_issue_ids.some((issueId) => !applicable.has(issueId))
-    ) {
-      throw new Error("attached detected issue is not part of the affected screenshots");
-    }
-    lines.push(`CHANGE REQUEST ${index + 1}`, "");
-    lines.push("Requested outcome",request.requested_change.trim(),"");
-    lines.push("Affected pages and sizes","");
-    const pages = new Map<string, { label: string; url: string; sizes: string[] }>();
-    affected.forEach((capture) => {
-      const page = manifest.pages.find((candidate) => candidate.id === capture.page_id)!;
-      const entry = pages.get(page.id) ?? { label: page.label, url: page.url, sizes: [] };
-      if (!entry.sizes.includes(capture.resolution.label)) entry.sizes.push(capture.resolution.label);
-      pages.set(page.id, entry);
+    const measurements = occurrences
+      .filter((occurrence) => occurrence.message && occurrence.message !== observed)
+      .map((occurrence) => `${occurrence.resolution.label}: ${occurrence.message}`);
+    lines.push(`${index + 1}. ${title}`);
+    lines.push(`   Severity: ${issue.severity}; ${confidenceLabel(issue)}.`);
+    lines.push(`   What was found: ${observed}`);
+    lines.push(`   Where: ${[...new Set(where)].join("; ")}`);
+    measurements.forEach((line) => lines.push(`   ${line}`));
+    const element = occurrences[0]?.technical_locator ?? issue.technical_locator ?? issue.selector;
+    if (element) lines.push(`   Element: ${element}${occurrences[0]?.other_technical_locator ? ` and ${occurrences[0].other_technical_locator}` : ""}`);
+    if (decision.note) lines.push(`   Reviewer note: ${decision.note}`);
+    if (issue.heuristic_suggestion) lines.push(`   Suggested fix: ${boundedHumanText(issue.heuristic_suggestion, 400)}`);
+    if (issue.ai_recommendation_status.status === "ok") lines.push(`   AI suggestion (${issue.ai_recommendation_status.model}): ${boundedHumanText(issue.ai_recommendation_status.text, 600)}`);
+    const evidence = occurrences.map((occurrence) => {
+      const full = manifest.assets.find((asset) => asset.sha256 === occurrence.full_screenshot_asset_sha256)!;
+      const crop = occurrence.crop_asset_sha256 ? manifest.assets.find((asset) => asset.sha256 === occurrence.crop_asset_sha256) : undefined;
+      return `${occurrence.resolution.label}: ${full.source_relative_path}${crop ? ` (close-up ${crop.source_relative_path})` : ""}`;
     });
-    [...pages.values()]
-      .sort((left, right) => left.label.localeCompare(right.label) || left.url.localeCompare(right.url))
-      .forEach((page) => {
-        lines.push(page.label, `Source: ${page.url}`, `Sizes: ${page.sizes.sort().join(", ")}`, "");
-      });
-    lines.push("Approved concerns", "");
-    const issues = request.selected_issue_ids
-      .map((issueId) => manifest.issues.find((issue) => issue.id === issueId)!)
-      .sort((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id));
-    if (issues.length === 0) {
-      lines.push("No machine suggestion was promoted; the reviewer-authored outcome above is the approved work.");
-    } else {
-      issues.forEach((issue) => {
-        const title = humanIssueTitle(issue);
-        const affectedSizes = affected
-          .filter((capture) => issue.capture_coordinate_ids.includes(capture.coordinate_id))
-          .map((capture) => capture.resolution.label)
-          .filter((value, position, values) => values.indexOf(value) === position)
-          .sort();
-        const observed = safeHumanIssueText(
-          issue.observed_outcome ?? issue.description,
-          issue,
-          "The reviewer confirmed the visible concern in the affected screenshots.",
-          title,
-        );
-        const criterion = safeHumanIssueText(
-          issue.acceptance_criterion,
-          issue,
-          "The approved outcome is visibly satisfied at every affected size.",
-          title,
-        );
-        lines.push(
-          title,
-          `Observed: ${observed}`,
-          `Affected sizes: ${affectedSizes.join(", ") || "reviewer-selected sizes"}`,
-          `Confidence: ${(issue.confidence ?? (issue.severity === "high" ? "high" : "needs-confirmation")).replace(/-/gu, " ")}`,
-          `Acceptance criterion: ${criterion}`,
-          "",
-        );
-      });
-    }
+    lines.push(`   Screenshots: ${evidence.join("; ")}`);
     lines.push("");
   });
-  lines.push("MACHINE SUGGESTIONS — NOT APPROVED WORK", "", "Unselected machine suggestions are not included in this handoff.");
+  lines.push("Issues the reviewer dismissed or did not select are not included.");
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
@@ -533,30 +514,26 @@ export interface HumanHandoffPdfOptions extends HumanHandoffContentOptions {
 
 export async function createHumanHandoffPdf(options: HumanHandoffPdfOptions): Promise<Buffer> {
   const { manifest, reviewState, reportRoot, content } = options;
-  const captures = new Map<string, ReviewManifest["captures"][number]>();
-  for (const review of requestedReviews(reviewState)) {
-    for (const coordinateId of review.requested_change!.affected_coordinate_ids) {
-      const capture = manifest.captures.find((candidate) => candidate.coordinate_id === coordinateId);
-      if (!capture) throw new Error(`unknown coordinate: ${coordinateId}`);
-      captures.set(coordinateId, capture);
-    }
-  }
   const images: Array<{
     label: string;
     mediaType: "image/png" | "image/jpeg";
     base64: string;
   }> = [];
-  for (const capture of [...captures.values()].sort((left, right) =>
-    left.coordinate_id.localeCompare(right.coordinate_id))) {
-    const page = manifest.pages.find((candidate) => candidate.id === capture.page_id)!;
-    const asset = manifest.assets.find((candidate) => candidate.id === capture.full_asset_id)!;
-    const source = await validatedSource(reportRoot, asset);
-    const bytes = await readFile(source);
-    images.push({
-      label: `${page.label} — ${capture.resolution.label}`,
-      mediaType: asset.media_type,
-      base64: bytes.toString("base64"),
-    });
+  // One close-up per exported issue and capture, numbered like the text; a
+  // finding with no crop (behaviour evidence) shows its full screenshot.
+  const selected = exportedIssues(manifest, reviewState);
+  for (const [index, { issue }] of selected.entries()) {
+    for (const occurrence of occurrencesFor(manifest, reviewState, issue)) {
+      const asset = manifest.assets.find((candidate) =>
+        candidate.sha256 === (occurrence.crop_asset_sha256 ?? occurrence.full_screenshot_asset_sha256))!;
+      const source = await validatedSource(reportRoot, asset);
+      const bytes = await readFile(source);
+      images.push({
+        label: `${index + 1}. ${humanIssueTitle(issue)} — ${occurrence.page.label}, ${occurrence.resolution.label}`,
+        mediaType: asset.media_type,
+        base64: bytes.toString("base64"),
+      });
+    }
   }
   return renderHumanHandoffPdf({ content, images });
 }
@@ -609,52 +586,32 @@ function preparePortableBundleContent(options: PortableBundleContentOptions): {
     throw new Error("export identity does not match review state");
   }
 
-  const requestReviews = requestedReviews(reviewState);
   const referencedAssets = new Map<string, ReviewAsset>();
-  const requests = requestReviews.map((captureReview) => {
-    const request = captureReview.requested_change!;
-    if (!isUsefulReviewerOutcome(request.requested_change) || request.affected_coordinate_ids.length === 0) {
-      throw new Error(`a useful reviewer-authored outcome is required: ${captureReview.coordinate_id}`);
-    }
-    if (new Set(request.selected_issue_ids).size !== request.selected_issue_ids.length) {
-      throw new Error(`duplicate selected issue: ${captureReview.coordinate_id}`);
-    }
-    const affectedCaptures = request.affected_coordinate_ids.map((coordinateId) => {
-      const capture = manifest.captures.find((candidate) => candidate.coordinate_id === coordinateId);
-      if (!capture) throw new Error(`unknown coordinate: ${coordinateId}`);
-      return capture;
-    });
-    const selectable = new Set(affectedCaptures.flatMap((capture) => capture.issue_ids));
-    if (request.selected_issue_ids.some((issueId) => !selectable.has(issueId))) {
-      throw new Error(`selected issue is not part of the affected screenshots: ${captureReview.coordinate_id}`);
-    }
-    const affectedCoordinates = [...new Set(request.affected_coordinate_ids)]
-      .sort()
-      .map((coordinateId) => coordinateFor(manifest, reviewState, coordinateId, new Set(request.selected_issue_ids)));
-    for (const coordinate of affectedCoordinates) {
-      const capture = manifest.captures.find(
-        (candidate) => candidate.coordinate_id === coordinate.coordinate_id,
-      )!;
-      const full = manifest.assets.find((candidate) => candidate.id === capture.full_asset_id)!;
+  const items: PortableBundleItem[] = exportedIssues(manifest, reviewState).map(({ issue, decision }) => {
+    const occurrences = occurrencesFor(manifest, reviewState, issue);
+    for (const occurrence of occurrences) {
+      const full = manifest.assets.find((candidate) => candidate.sha256 === occurrence.full_screenshot_asset_sha256)!;
       referencedAssets.set(full.sha256, full);
-      for (const issue of coordinate.issues) {
-        if (!issue.crop_asset_sha256) continue;
-        const crop = manifest.assets.find(
-          (candidate) => candidate.sha256 === issue.crop_asset_sha256,
-        );
-        if (!crop) throw new Error(`missing crop asset: ${issue.crop_asset_sha256}`);
-        referencedAssets.set(crop.sha256, crop);
-      }
+      if (!occurrence.crop_asset_sha256) continue;
+      const crop = manifest.assets.find((candidate) => candidate.sha256 === occurrence.crop_asset_sha256);
+      if (!crop) throw new Error(`missing crop asset: ${occurrence.crop_asset_sha256}`);
+      referencedAssets.set(crop.sha256, crop);
     }
     return {
-      request_id: request.request_id,
-      classification: "bad" as const,
-      requested_change: request.requested_change,
-      authorship: request.authorship,
-      created_at: request.created_at,
-      updated_at: request.updated_at,
-      origin_coordinate_id: request.origin_coordinate_id,
-      affected_coordinates: affectedCoordinates,
+      issue_id: issue.id,
+      type: issue.type,
+      severity: issue.severity,
+      ...(issue.confidence ? { confidence: issue.confidence } : {}),
+      ...(issue.confidence_reasons ? { confidence_reasons: issue.confidence_reasons } : {}),
+      title: issue.title,
+      description: issue.description,
+      ...(issue.observed_outcome ? { observed_outcome: issue.observed_outcome } : {}),
+      ...(issue.acceptance_criterion ? { acceptance_criterion: issue.acceptance_criterion } : {}),
+      heuristic_suggestion: issue.heuristic_suggestion,
+      ai_recommendation_status: issue.ai_recommendation_status,
+      ...(decision.note ? { reviewer_note: decision.note } : {}),
+      selected_at: decision.updated_at,
+      occurrences,
     };
   });
 
@@ -668,7 +625,7 @@ function preparePortableBundleContent(options: PortableBundleContentOptions): {
     }));
   const bundle: PortableReviewBundle = {
     artifact_type: "viewport-qa-change-request-bundle",
-    schema_version: 1,
+    schema_version: 2,
     export_policy_id: EXPORT_POLICY_ID,
     export_id: identity.export_id,
     exported_at: identity.exported_at,
@@ -676,7 +633,7 @@ function preparePortableBundleContent(options: PortableBundleContentOptions): {
     source_report: { ...manifest.source_report, manifest_sha256: manifestSha256, run_id: manifest.run_id },
     audit_verdict: manifest.audit_verdict,
     assets,
-    requests,
+    items,
   };
   const json = canonicalJson(bundle);
   return { json, bundle, referencedAssets };
