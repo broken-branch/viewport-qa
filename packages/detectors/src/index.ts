@@ -161,6 +161,33 @@ export const detectElementOverflow: Detector = ({ elements }) => {
 // overlap: two content-bearing elements whose boxes intersect
 // ---------------------------------------------------------------------------
 
+const MEDIA_TAGS = new Set(["img", "picture", "video", "canvas", "svg"]);
+
+/** Share of `inner` that lies within `outer`, 0..1. */
+function containedShare(inner: Rect, outer: Rect): number {
+  const width = Math.min(inner.x + inner.width, outer.x + outer.width) - Math.max(inner.x, outer.x);
+  const height = Math.min(inner.y + inner.height, outer.y + outer.height) - Math.max(inner.y, outer.y);
+  const area = inner.width * inner.height;
+  return area > 0 && width > 0 && height > 0 ? (width * height) / area : 0;
+}
+
+/**
+ * A visible image, or a layer painted with one, that the element's box sits
+ * on. Text or a control placed over a photo is composition (a hero, a card,
+ * a caption), so neither contrast nor overlap can be judged from CSS alone.
+ */
+function underlyingImage(elements: ElementMetric[], element: ElementMetric): ElementMetric | undefined {
+  if (MEDIA_TAGS.has(element.tag)) return undefined;
+  return elements.find((candidate) =>
+    candidate.visible &&
+    (MEDIA_TAGS.has(candidate.tag) || candidate.hasBackgroundImage) &&
+    candidate.index !== element.index &&
+    !isAncestor(elements, element.index, candidate.index) &&
+    !isAncestor(elements, candidate.index, element.index) &&
+    candidate.visibleRect.width >= 40 && candidate.visibleRect.height >= 40 &&
+    containedShare(element.visibleRect, candidate.visibleRect) >= 0.9);
+}
+
 function rectsIntersect(a: Rect, b: Rect): boolean {
   return (
     a.x < b.x + b.width && b.x < a.x + a.width &&
@@ -219,6 +246,11 @@ export const detectOverlap: Detector = ({ elements }) => {
       // A fixed layer (modal, cookie banner, sticky bar) sits over the page by
       // design; only elements in the same layer can collide.
       if (a.inFixedLayer !== b.inFixedLayer) continue;
+      // Text or a control laid over a photo is composition, not a collision.
+      if (MEDIA_TAGS.has(a.tag) !== MEDIA_TAGS.has(b.tag)) {
+        const [media, laid] = MEDIA_TAGS.has(a.tag) ? [a, b] : [b, a];
+        if (containedShare(laid.visibleRect, media.visibleRect) >= 0.9) continue;
+      }
       // Cheap pass on raw boxes; a pair that does not even touch there is
       // done. Pairs that do are judged on what is actually painted: the boxes
       // clipped by ancestor overflow (image wrappers, carousels, scrollers).
@@ -516,6 +548,9 @@ export const detectClippedText: Detector = ({ elements }) => {
       continue;
     if (element.overflowY !== "hidden" && element.overflowY !== "clip")
       continue;
+    // overflow:hidden on the document itself is a scroll lock (a modal is
+    // open); the page below is still there, not cut off.
+    if (element.tag === "html" || element.tag === "body") continue;
     if (element.scrollHeight <= element.clientHeight + 2) continue;
     if (!subtreeHasText(byParent, element)) continue;
     const clipTop = element.rect.y;
@@ -578,6 +613,9 @@ export const detectOffscreenInteractive: Detector = ({ page, elements }) => {
     // A same-page link parked above or left of the page is the standard
     // skip-link pattern (revealed on focus), not a control users lost.
     if (element.inPageLink && (bottom <= 0 || right <= 0)) continue;
+    // Anything parked thousands of pixels off-canvas (left: -9999px) was hidden
+    // on purpose; a layout bug lands a control a few hundred pixels out.
+    if (right <= -2000 || bottom <= -2000) continue;
     issues.push({
       type: "offscreen-interactive",
       severity: "high",
@@ -638,7 +676,8 @@ export const detectContrast: Detector = ({ elements }) => {
       !element.hasDirectText ||
       !element.textExpectedVisible ||
       element.srOnly ||
-      element.hasBackgroundImage
+      element.hasBackgroundImage ||
+      underlyingImage(elements, element)
     ) {
       continue;
     }
@@ -768,7 +807,8 @@ export const detectColor: Detector = ({ elements }) => {
       !element.hasDirectText ||
       !element.textExpectedVisible ||
       element.srOnly ||
-      element.hasBackgroundImage
+      element.hasBackgroundImage ||
+      underlyingImage(elements, element)
     ) {
       continue;
     }

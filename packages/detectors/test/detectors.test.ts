@@ -713,3 +713,48 @@ describe("runDetectors", () => {
     expect(issues.some((issue) => issue.type === "page-overflow")).toBe(true);
   });
 });
+
+describe("layered-for-effect compositions", () => {
+  it("does not report text or a link laid over a photo as an overlap", () => {
+    const photo = el({ index: 0, tag: "img", hasDirectText: false, textRects: [], rect: { x: 0, y: 0, width: 800, height: 500 } });
+    const caption = el({ index: 1, selector: "p#hero", rect: { x: 40, y: 380, width: 400, height: 60 } });
+    const link = el({ index: 2, selector: "a#cta", interactive: true, rect: { x: 40, y: 440, width: 160, height: 40 } });
+    expect(detectOverlap(snap([photo, caption, link]))).toHaveLength(0);
+    // A photo that only partly covers a paragraph is still a collision.
+    const straddling = el({ index: 3, selector: "p#straddle", rect: { x: 700, y: 380, width: 300, height: 60 } });
+    expect(detectOverlap(snap([photo, straddling])).map((issue) => issue.type)).toEqual(["overlap"]);
+  });
+
+  it("skips contrast and colour checks for text sitting on an image", () => {
+    const photo = el({ index: 0, tag: "img", hasDirectText: false, textRects: [], rect: { x: 0, y: 0, width: 800, height: 500 } });
+    const white = el({
+      index: 1, selector: "h1#hero", rect: { x: 40, y: 200, width: 400, height: 60 },
+      renderedTextColor: { red: 255, green: 255, blue: 255, alpha: 1 },
+      effectiveBackgroundColor: { red: 250, green: 250, blue: 250, alpha: 1 },
+    });
+    expect(detectContrast(snap([photo, white]))).toHaveLength(0);
+    expect(detectColor(snap([photo, white]))).toHaveLength(0);
+    const alone = el({
+      index: 1, selector: "h1#alone", rect: { x: 40, y: 900, width: 400, height: 60 },
+      renderedTextColor: { red: 255, green: 255, blue: 255, alpha: 1 },
+      effectiveBackgroundColor: { red: 250, green: 250, blue: 250, alpha: 1 },
+    });
+    expect(detectContrast(snap([photo, alone]))).toHaveLength(1);
+  });
+
+  it("treats overflow:hidden on the document as a scroll lock, not cut-off text", () => {
+    const html = el({ index: 0, tag: "html", hasDirectText: false, textRects: [], overflowY: "hidden", clientHeight: 800, scrollHeight: 4500, rect: { x: 0, y: 0, width: 1280, height: 800 } });
+    const text = el({ index: 1, parent: 0, selector: "p#below", rect: { x: 0, y: 1200, width: 400, height: 24 }, textRects: [{ x: 0, y: 1200, width: 400, height: 24 }] });
+    expect(detectClippedText(snap([html, text]))).toHaveLength(0);
+    const card = el({ ...html, index: 0, tag: "div", selector: "div#card", clientHeight: 28, scrollHeight: 120, rect: { x: 0, y: 0, width: 400, height: 28 } });
+    const cardText = el({ ...text, index: 1, parent: 0, selector: "p#in-card", rect: { x: 0, y: 0, width: 400, height: 120 }, textRects: [{ x: 0, y: 0, width: 400, height: 120 }] });
+    expect(detectClippedText(snap([card, cardText])).map((issue) => issue.type)).toEqual(["clipped-text"]);
+  });
+
+  it("ignores a control parked thousands of pixels off-canvas", () => {
+    const parked = el({ index: 0, tag: "button", selector: "button#hidden", interactive: true, rect: { x: -9999, y: 300, width: 100, height: 40 } });
+    const nudged = el({ index: 1, tag: "button", selector: "button#lost", interactive: true, rect: { x: -300, y: 300, width: 100, height: 40 } });
+    const issues = detectOffscreenInteractive(snap([parked, nudged]));
+    expect(issues.map((issue) => issue.selector)).toEqual(["button#lost"]);
+  });
+});
