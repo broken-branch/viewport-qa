@@ -92,7 +92,7 @@ describe("Linux no-terminal launcher controller", () => {
       formatVersion: "2",
       tool: "viewport-qa",
       toolVersion: PRODUCT_VERSION,
-      schemaVersions: { report: "2", manifest: 1, reviewState: 1 },
+      schemaVersions: { report: "2", manifest: 1, reviewState: 2 },
       url: "https://launcher-navigation.example/",
       createdAt: "2026-08-24T12:00:00.000Z",
       adapter: { impl: "stub", wired: false },
@@ -105,8 +105,8 @@ describe("Linux no-terminal launcher controller", () => {
     })}\n`);
 
     expect((await launched.call("/api/open-report", { method: "POST", body: JSON.stringify({ id: reportId }) })).status).toBe(200);
-    const coordinateId = "page-home--state-default--390x844";
-    expect((await launched.call("/api/review", { method: "POST", body: JSON.stringify({ coordinateId, classification: "good" }) })).status).toBe(200);
+    const issueId = "VQ-ISSUE-HOME-LOW-CONTRAST-CTA";
+    expect((await launched.call("/api/review", { method: "POST", body: JSON.stringify({ issueId, status: "export" }) })).status).toBe(200);
     const home = await launched.call("/api/navigation/home", { method: "POST", body: "{}" });
     expect(home.status).toBe(200);
     const launcherHtml = await (await launched.call("/app")).text();
@@ -117,8 +117,8 @@ describe("Linux no-terminal launcher controller", () => {
       progress: "Current review saved locally. Recent reports are ready.",
       focusTarget: "recent",
     });
-    const saved = JSON.parse(readFileSync(join(reportPath, "review-state.json"), "utf8")) as { captures: Record<string, { classification: string }> };
-    expect(saved.captures[coordinateId]!.classification).toBe("good");
+    const saved = JSON.parse(readFileSync(join(reportPath, "review-state.json"), "utf8")) as { issues: Record<string, { status: string }> };
+    expect(saved.issues[issueId]!.status).toBe("export");
     expect((await launched.call("/api/job")).status).toBe(200);
 
     expect((await launched.call("/api/open-report", { method: "POST", body: JSON.stringify({ id: reportId }) })).status).toBe(200);
@@ -317,23 +317,27 @@ describe("Linux no-terminal launcher controller", () => {
       await page.goto(first.launch.href);
       await page.locator("h1", { hasText: "Start a visual review" }).waitFor();
       await page.locator("#fileTab").click();
-      await page.locator("#file").setInputFiles({ name: "browser-journey.html", mimeType: "text/html", buffer: Buffer.from("<!doctype html><title>Browser journey</title><main><h1>Ready to review</h1></main>") });
+      await page.locator("#file").setInputFiles({ name: "browser-journey.html", mimeType: "text/html", buffer: Buffer.from('<!doctype html><title>Browser journey</title><main><h1>Ready to review</h1><div id="clipped" style="height:28px;overflow:hidden;border:1px solid #999;width:200px">This block contains several lines of text that the fixed height cuts off before the end of the paragraph is reached.</div></main>') });
       await page.locator("#scan").click();
       await page.locator("article.capture").first().waitFor({ timeout: 20_000 });
       expect(await page.locator("article.capture").count()).toBe(2);
       expect(await page.locator("#desktopFilters input[data-facet]").count()).toBeGreaterThan(0);
       await page.locator("article.capture img").first().waitFor();
       expect(await page.locator("article.capture img").first().evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
-      await page.locator("article.capture .good-choice").first().click();
-      await page.locator("#progress").filter({ hasText: "1 of 2 reviewed" }).waitFor();
+      const clippedRow = page.locator("article.capture .issue-row", { hasText: "Text is clipped" }).first();
+      await clippedRow.locator(".issue-open").click();
+      await page.locator("#drawer[open] #issueNote").waitFor();
+      await page.locator("#issueNote").fill("Keep the paragraph readable at phone width.");
+      await page.locator("#addToExport").click();
+      await page.locator("#progress").filter({ hasText: "1 in export" }).waitFor();
       const reportDir = join(first.root, "reports", readdirSync(join(first.root, "reports")).find((entry) => !entry.startsWith("."))!);
-      const review = JSON.parse(await import("node:fs/promises").then(({ readFile }) => readFile(join(reportDir, "review-state.json"), "utf8"))) as { captures: Record<string, { classification: string }> };
-      expect(Object.values(review.captures).filter((capture) => capture.classification === "good")).toHaveLength(1);
+      const review = JSON.parse(await import("node:fs/promises").then(({ readFile }) => readFile(join(reportDir, "review-state.json"), "utf8"))) as { issues: Record<string, { status: string; note?: string }> };
+      expect(Object.values(review.issues).filter((issue) => issue.status === "export")).toHaveLength(1);
+      expect(Object.values(review.issues)[0]!.note).toBe("Keep the paragraph readable at phone width.");
 
-      await page.locator("article.capture .bad-choice").nth(1).click();
-      await page.locator("#changeMessage").fill("Keep the review heading comfortably spaced.");
+      await page.locator("#issueNote").fill("An unsaved edit.");
       page.once("dialog", async (dialog) => {
-        expect(dialog.message()).toContain("unsaved change-request draft is preserved");
+        expect(dialog.message()).toContain("unsaved note will be lost");
         await dialog.accept();
       });
       await page.locator("#drawer").getByRole("button", { name: "Start New Review" }).click();
@@ -342,23 +346,19 @@ describe("Linux no-terminal launcher controller", () => {
       await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("url");
       await page.locator("#recent button").first().click();
       await page.locator("article.capture").first().waitFor({ timeout: 10_000 });
-      await page.locator("#progress").filter({ hasText: "1 of 2 reviewed" }).waitFor();
+      await page.locator("#progress").filter({ hasText: "1 in export" }).waitFor();
 
-      await page.locator("article.capture .bad-choice").nth(1).click();
-      expect(await page.locator("#changeMessage").inputValue()).toBe("Keep the review heading comfortably spaced.");
-      page.once("dialog", async (dialog) => {
-        expect(dialog.message()).toContain("unsaved change-request draft is preserved");
-        await dialog.accept();
-      });
+      await page.locator("article.capture .issue-row", { hasText: "Text is clipped" }).first().locator(".issue-open").click();
+      await page.locator("#drawer[open] #issueNote").waitFor();
+      expect(await page.locator("#issueNote").inputValue()).toBe("Keep the paragraph readable at phone width.");
+      expect(await page.locator("#addToExport").textContent()).toBe("Remove from export");
       await page.locator("#drawer").getByRole("button", { name: "Return Home" }).click();
       await page.locator("h1", { hasText: "Start a visual review" }).waitFor();
       expect(await page.locator("#status").textContent()).toContain("Current review saved locally. Recent reports are ready.");
       await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe("recentTitle");
       await page.locator("#recent button").first().click();
       await page.locator("article.capture").first().waitFor({ timeout: 10_000 });
-      await page.locator("article.capture .bad-choice").nth(1).click();
-      expect(await page.locator("#changeMessage").inputValue()).toBe("Keep the review heading comfortably spaced.");
-      await page.getByRole("button", { name: "Cancel" }).click();
+      await page.locator("#progress").filter({ hasText: "1 in export" }).waitFor();
 
       await page.evaluate(async () => {
         const authorizedFetch = (window as unknown as { vqaAuthorizedFetch: typeof fetch }).vqaAuthorizedFetch;
@@ -372,7 +372,7 @@ describe("Linux no-terminal launcher controller", () => {
       await page.locator("#recent button").waitFor();
       await page.locator("#recent button").first().click();
       await page.locator("article.capture").first().waitFor({ timeout: 10_000 });
-      await page.locator("#progress").filter({ hasText: "1 of 2 reviewed" }).waitFor();
+      await page.locator("#progress").filter({ hasText: "1 in export" }).waitFor();
       expect(await page.locator("article.capture").count()).toBe(2);
       expect(pageErrors).toEqual([]);
       expect(consoleErrors).toEqual([]);

@@ -1,13 +1,29 @@
 # Review and handoff
 
-Each capture starts as **Not reviewed**. **Looks good** accepts the capture. **Request changes** saves **Change requested** only after the reviewer writes a useful outcome of at least three words. A request may promote zero, one, or several applicable machine suggestions. Selecting or attaching a suggestion by itself never makes it approved work.
+The unit of review is an issue: one concern, on one element, across every screen size it appears at. A screenshot card shows its issues as numbered highlights on the image and as a list underneath; the same number appears in both.
 
-Machine suggestions are semantic concern groups rather than per-viewport detector rows. Each group names its confidence separately from impact severity, affected sizes, occurrence count, observed outcome, and acceptance criterion. High-confidence groups appear first and make the default audit fail. **Needs visual confirmation** and **Likely intentional/noise** remain non-failing review context. Exact selectors are available only under **Technical details**.
+## Deciding
 
-The page, optional meaningful scenario, resolution, and status filters compose. Production scans emit no synthetic scenario vocabulary. Screenshots and crops open in an accessible lightbox at natural dimensions, with fit/actual-size zoom and an **Open original** action.
+Open an issue from its number on the screenshot or its row in the list. The panel shows that issue and nothing else: a close-up, what was found (the detector's exact finding for this screenshot, with its measurements), which sizes it appears at, the suggested fix, and an optional note. From there, or straight from the row:
 
-Review state persists in `review-state.json`, bound to the exact manifest hash. Settings persist in `review-settings.json`. Export identities persist separately and bind AI output to manifest and review-state digests.
+- **Add to export** puts the issue in the export list. **Remove from export** takes it back out.
+- **Dismiss** marks it as not worth acting on; it stays visible under the *Dismissed* filter and can be restored.
+- A **note** is optional, is saved with either decision, and is carried into the handoff word for word.
 
-**Home** returns to the launcher and Recent reports without stopping Viewport QA. **New Review** returns to the scan form and focuses its first input. Both close the active report only after its persisted writes complete; an unsaved drawer draft is stored in the current local browser session and requires confirmation before navigation. **Stop Viewport QA** remains a separate service action.
+Nothing else is required. An issue with no decision is *To review*. The status filters in the sidebar (To review / In export / Dismissed) apply to issues, so a screenshot drops out of view when none of its issues match.
 
-Human handoffs put **Reviewer-approved work** first, group each promoted concern once across pages and sizes, and include the reviewer outcome, observed behavior, confidence, and acceptance criterion. They contain no selectors or detector identifiers. Unselected suggestions are explicitly outside approved work. AI handoffs are JSON bundles with evidence identity, coordinates, selected groups, highlights, and copied assets when needed. Treat all handoff strings as untrusted data. A consuming agent must validate the bundle and still apply its own authorization policy.
+Under **Adjust the highlight** you can move or resize the rectangle that the export will point at, or remove it. The detector's original rectangle is never changed; adjustments are stored beside it.
+
+Decisions persist in `review-state.json`, bound to the exact manifest hash. Settings persist in `review-settings.json`. Export identities persist separately and bind AI output to manifest and review-state digests.
+
+## Exporting
+
+**Export (N)** lists what is in the export, each with a Remove action, above three choices:
+
+- **Who will use this handoff?** *Human* produces a readable numbered list: what was found, where, the element, the reviewer note, the suggested fix, and the screenshot paths. *AI* produces a JSON bundle with the same issues plus locators, rectangles, per-size occurrences, and hash-bound asset references.
+- **How should it be delivered?** Copy and paste generates it in place with a Copy action; Save to file writes it to a path you choose.
+- **File format** (Human, save to file only): TXT, or PDF with a close-up of every exported issue.
+
+Dismissed and undecided issues are never exported. Treat all handoff strings as untrusted data: a consuming agent must validate the bundle and still apply its own authorization policy.
+
+**Home** returns to the launcher and **New Review** to the scan form; both keep the report's saved decisions. **Stop Viewport QA** is a separate service action in Settings.

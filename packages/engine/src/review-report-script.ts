@@ -20,14 +20,13 @@ const concreteScenarioEnabled = manifest.pages.some(function(page) {
   return labels.size>1;
 }) && manifest.states.every(function(item){return item.label.trim()&&!genericScenarios.has(item.label.trim().toLowerCase());});
 const scenarioEnabled = recipeScenarioEnabled || concreteScenarioEnabled;
-let review = { captures: {} };
+let review = { issues: {}, highlights: {} };
 let settings = { default_handoff_path:"" };
 let zoom = 1;
 let fit = false;
-let activeId = null;
-let selectedReviewIssues = new Set();
-let requestWasValid = null;
-let draftDirty = false;
+let activeIssueId = null;
+let activeCoordinateId = null;
+let noteDirty = false;
 const highlightSaveQueues = new Map();
 let returnFocus = null;
 let drawerMode = null;
@@ -41,7 +40,8 @@ let lightboxReturnFocus = null;
 let lightboxAsset = null;
 let lightboxZoom = 1;
 let lightboxFit = false;
-const selected = { page:new Set(manifest.pages.map(function(item){return item.id;})), scenario:new Set(manifest.states.map(function(item){return item.id;})), resolution:new Set(manifest.captures.map(function(item){return item.resolution.label;})), status:new Set(["unreviewed","good","bad"]) };
+const STATUSES = ["unreviewed","export","dismissed"];
+const selected = { page:new Set(manifest.pages.map(function(item){return item.id;})), scenario:new Set(manifest.states.map(function(item){return item.id;})), resolution:new Set(manifest.captures.map(function(item){return item.resolution.label;})), status:new Set(STATUSES) };
 
 function node(tag, attributes, children) {
   const element = document.createElement(tag);
@@ -55,11 +55,15 @@ function node(tag, attributes, children) {
   (children || []).forEach(function(child) { element.appendChild(child); });
   return element;
 }
-function statusFor(id) { return review.captures[id] ? review.captures[id].classification : "unreviewed"; }
-function statusLabel(value) { return value === "good" ? "Looks good" : value === "bad" ? "Change requested" : "Not reviewed"; }
+function issueStatus(id) { return review.issues[id] ? review.issues[id].status : "unreviewed"; }
+function issueNote(id) { return review.issues[id] && review.issues[id].note ? review.issues[id].note : ""; }
+function statusLabel(value) { return value === "export" ? "In export" : value === "dismissed" ? "Dismissed" : "To review"; }
 function pageFor(capture) { return pageById.get(capture.page_id); }
 function stateFor(capture) { return stateById.get(capture.state_id); }
-function matches(capture) { return selected.page.has(capture.page_id) && (!scenarioEnabled || selected.scenario.has(capture.state_id)) && selected.resolution.has(capture.resolution.label) && selected.status.has(statusFor(capture.coordinate_id)); }
+function captureIssues(capture) { return capture.issue_ids.map(function(id){return issueById.get(id);}).filter(Boolean); }
+function issuesShownOn(capture) { return captureIssues(capture).filter(function(issue){return selected.status.has(issueStatus(issue.id));}); }
+function statusMatches(capture) { return capture.issue_ids.length===0 ? selected.status.has("unreviewed") : issuesShownOn(capture).length>0; }
+function matches(capture) { return selected.page.has(capture.page_id) && (!scenarioEnabled || selected.scenario.has(capture.state_id)) && selected.resolution.has(capture.resolution.label) && statusMatches(capture); }
 function announce(text) { document.getElementById("liveRegion").textContent = text; }
 function captureName(capture) { return pageFor(capture).label + (scenarioEnabled ? " / " + stateFor(capture).label : "") + " / " + capture.resolution.label; }
 function confidenceFor(issue) { return issue.confidence || (issue.severity==="high"?"high":"needs-confirmation"); }
@@ -67,18 +71,19 @@ function isBehaviourIssue(issue) { return issue.finding_kind==="behaviour" || be
 function confidenceLabel(issue) { return ({high:"High confidence","needs-confirmation":"Needs visual confirmation","likely-noise":"Likely intentional/noise"})[confidenceFor(issue)]; }
 function affectedSizeLabel(issue) { const labels=issue.capture_coordinate_ids.map(function(id){return manifest.captures.find(function(capture){return capture.coordinate_id===id;});}).filter(Boolean).map(function(capture){return capture.resolution.label;});return Array.from(new Set(labels)).join(", "); }
 function presentationGroupsFor(issue) { return (issue.group_ids||[]).map(function(id){return presentationGroupById.get(id);}).filter(Boolean); }
-function presentationGroupEvidence(group) { return node("section",{"data-presentation-group":group.id,class:"presentation-group"},[node("p",{text:group.message}),node("p",{class:"issue-range",text:group.viewportRange})]); }
+function issueRange(issue){const affectedCaptures=issue.capture_coordinate_ids.map(function(id){return manifest.captures.find(function(item){return item.coordinate_id===id;});}).filter(Boolean);if(!affectedCaptures.length)return "";const scope=affectedCaptures[0];const scopeCaptures=manifest.captures.filter(function(item){return item.page_id===scope.page_id&&item.state_id===scope.state_id;});const byWidth=function(a,b){return a.resolution.width-b.resolution.width;};const affected=affectedCaptures.slice().sort(byWidth).map(function(item){return item.resolution.label;}),all=scopeCaptures.slice().sort(byWidth).map(function(item){return item.resolution.label;});const affectedSet=new Set(affected),clean=all.filter(function(label){return !affectedSet.has(label);});if(!clean.length)return all.length===1?"at "+all[0]:"at every size scanned ("+all.join(", ")+")";return "at "+affected.join(", ")+"; fine at "+clean.join(", ");}
 const concernLabels={"page-overflow":"page content spills horizontally","element-overflow":"content spills outside its container",overlap:"visible content overlaps",wrapping:"text wraps poorly","cramped-spacing":"content may be too close together","excessive-gap":"spacing may be unexpectedly large","clipped-text":"text is clipped","offscreen-interactive":"control is outside the reachable area",contrast:"text contrast is too low","font-rendering":"text rendering is broken",color:"text is indistinguishable from its background","scenario-step":"scenario step could not be completed","console-message":"browser console message","failed-request":"failed browser request","storage-change":"browser storage write"};
 function containsTechnicalLocator(value,issue){const text=String(value||"");return text.includes(":nth-child(")||text.includes(" > ")||[issue.selector,issue.other_selector,issue.technical_locator].filter(Boolean).some(function(locator){return locator.length>2&&text.includes(locator);});}
 function boundedDisplay(value,maximum){const normalized=String(value||"").replace(/\\s+/g," ").trim();return normalized.length<=maximum?normalized:normalized.slice(0,maximum-1).trimEnd()+"…";}
-function issueTitle(issue){const title=String(issue.title||"").trim(),name=String(issue.semantic_name||"page content").trim();if(isBehaviourIssue(issue))return boundedDisplay(title||name||concernLabels[issue.type],110);if(title&&!containsTechnicalLocator(title,issue))return boundedDisplay(title,110);return boundedDisplay((!containsTechnicalLocator(name,issue)?name:"page content")+": "+(concernLabels[issue.type]||"visual concern"),110);}
-function issueOutcome(issue){const title=issueTitle(issue),rawTitle=String(issue.title||"").trim(),candidates=[issue.observed_outcome,issue.description];for(const candidate of candidates){const text=String(candidate||"").trim();if(text&&text!==title&&text!==rawTitle&&(isBehaviourIssue(issue)||!containsTechnicalLocator(text,issue)))return boundedDisplay(text,240);}return "Machine evidence suggests "+(concernLabels[issue.type]||(isBehaviourIssue(issue)?"browser behaviour":"a visual concern"))+".";}
+function capitalize(text){return text.charAt(0).toUpperCase()+text.slice(1);}
+function issueSubject(issue){const name=String(issue.semantic_name||"").trim();return name&&!containsTechnicalLocator(name,issue)?boundedDisplay(name,70):"";}
+function issueTitle(issue){const title=String(issue.title||"").trim(),name=String(issue.semantic_name||"").trim();if(isBehaviourIssue(issue))return boundedDisplay(title||name||concernLabels[issue.type],110);const separator=title.lastIndexOf(": ");const generated=separator>0&&(containsTechnicalLocator(title.slice(0,separator),issue)||(name&&name.startsWith(title.slice(0,separator).replace(/…$/,""))));if(generated)return capitalize(title.slice(separator+2));if(title&&!containsTechnicalLocator(title,issue))return boundedDisplay(title,110);return capitalize(concernLabels[issue.type]||issue.type.replace(/-/g," "));}
+function occurrenceOn(issue,capture){return issue.occurrences&&issue.occurrences.find(function(item){return item.capture_coordinate_id===capture.coordinate_id;});}
+function issueFinding(issue,capture){const occurrence=capture?occurrenceOn(issue,capture):null;if(occurrence&&occurrence.message)return occurrence.message;const title=issueTitle(issue),rawTitle=String(issue.title||"").trim(),candidates=[issue.observed_outcome,issue.description];for(const candidate of candidates){const text=String(candidate||"").trim();if(text&&text!==title&&text!==rawTitle)return boundedDisplay(text,400);}return "Machine evidence suggests "+(concernLabels[issue.type]||(isBehaviourIssue(issue)?"browser behaviour":"a visual concern"))+".";}
 function behaviourEvidence(item){if(item.kind==="console-message")return item.level+" at "+item.sourceUrl+":"+item.line+": "+item.text;if(item.kind==="failed-request")return item.method+" "+item.url+" "+(item.status===undefined?"failed: "+item.failureReason:"answered "+item.status);if(item.storage==="cookie")return "cookie "+item.name+" for "+item.attributes.domain+item.attributes.path+" (SameSite="+item.attributes.sameSite+", Secure="+item.attributes.secure+", HttpOnly="+item.attributes.httpOnly+", Expires="+item.attributes.expires+")";return item.storage+" key "+item.key;}
 function occurrenceLabel(occurrence,issue){const capture=manifest.captures.find(function(item){return item.coordinate_id===occurrence.capture_coordinate_id;}),size=capture?capture.resolution.label:"affected size";if(occurrence.behaviour)return size+": "+boundedDisplay(behaviourEvidence(occurrence.behaviour),240);const primary=isBehaviourIssue(issue)?boundedDisplay(occurrence.semantic_name,72):containsTechnicalLocator(occurrence.semantic_name,issue)?"page content":boundedDisplay(occurrence.semantic_name,72),secondary=occurrence.other_semantic_name&&!containsTechnicalLocator(occurrence.other_semantic_name,issue)?" and "+boundedDisplay(occurrence.other_semantic_name,72):"";return size+": "+primary+secondary;}
-function readDraft(id) { try { const drafts=JSON.parse(sessionStorage.getItem(reviewDraftKey)||"{}");return drafts[id]||null; } catch { return null; } }
-function clearDraft(id) { try { const drafts=JSON.parse(sessionStorage.getItem(reviewDraftKey)||"{}");delete drafts[id];sessionStorage.setItem(reviewDraftKey,JSON.stringify(drafts)); } catch {} draftDirty=false; }
-function persistDraft() { const textarea=document.getElementById("changeMessage");if(!activeId||!textarea)return;const draft={text:textarea.value,affected:Array.from(document.querySelectorAll('input[name="affected"]:checked')).map(function(input){return input.value;}),selected:Array.from(selectedReviewIssues)};try{const drafts=JSON.parse(sessionStorage.getItem(reviewDraftKey)||"{}");drafts[activeId]=draft;sessionStorage.setItem(reviewDraftKey,JSON.stringify(drafts));}catch{}draftDirty=true; }
-async function navigateToLauncher(destination) { if(draftDirty){persistDraft();if(!confirm("Your unsaved change-request draft is preserved in this local session. Leave the review now?"))return;}try{await postJson("/api/navigation/"+destination,{});location.reload();}catch(error){announce("Could not return to the launcher");} }
+function typeLabel(issue) { return concernLabels[issue.type] || issue.type.replace(/-/g," "); }
+async function navigateToLauncher(destination) { if(noteDirty&&!confirm("Your unsaved note will be lost. Leave the review now?"))return;try{await postJson("/api/navigation/"+destination,{});location.reload();}catch(error){announce("Could not return to the launcher");} }
 
 function facetMarkup(facet, label, options) {
   const fieldset = node("fieldset", {}, [node("legend", {text:label})]);
@@ -93,25 +98,34 @@ function facetMarkup(facet, label, options) {
       const replacement = scope.querySelector('input[data-facet="' + facet + '"][value="' + CSS.escape(value) + '"]');
       if (replacement) replacement.focus();
     });
-    const count = manifest.captures.filter(function(capture) {
-      if (facet === "page" && capture.page_id !== value) return false;
-      if (facet === "scenario" && capture.state_id !== value) return false;
-      if (facet === "resolution" && capture.resolution.label !== value) return false;
-      if (facet === "status" && statusFor(capture.coordinate_id) !== value) return false;
+    const otherFacetsMatch = function(capture) {
       return Object.entries(selected).every(function(entry) {
         const name = entry[0], values = entry[1];
-        if (name === facet) return true;
-        const candidate = name === "page" ? capture.page_id : name === "scenario" ? capture.state_id : name === "resolution" ? capture.resolution.label : statusFor(capture.coordinate_id);
+        if (name === facet || name === "status") return true;
+        const candidate = name === "page" ? capture.page_id : name === "scenario" ? capture.state_id : capture.resolution.label;
         return values.has(candidate);
       });
-    }).length;
+    };
+    let count;
+    if (facet === "status") {
+      const seen = new Set();
+      manifest.captures.filter(otherFacetsMatch).forEach(function(capture){capture.issue_ids.forEach(function(id){if(issueStatus(id)===value)seen.add(id);});});
+      count = seen.size;
+    } else {
+      count = manifest.captures.filter(function(capture) {
+        if (facet === "page" && capture.page_id !== value) return false;
+        if (facet === "scenario" && capture.state_id !== value) return false;
+        if (facet === "resolution" && capture.resolution.label !== value) return false;
+        return otherFacetsMatch(capture) && statusMatches(capture);
+      }).length;
+    }
     fieldset.appendChild(node("label", {class:"check"}, [input,node("span",{text:text}),node("span",{class:"count","aria-hidden":"true",text:String(count)})]));
   });
   return fieldset;
 }
 function filterControls() {
   const fragment = document.createDocumentFragment();
-  fragment.appendChild(facetMarkup("status","Status",[["unreviewed","Not reviewed"],["good","Looks good"],["bad","Change requested"]]));
+  fragment.appendChild(facetMarkup("status","Issues",[["unreviewed","To review"],["export","In export"],["dismissed","Dismissed"]]));
   fragment.appendChild(facetMarkup("page","Page",manifest.pages.map(function(item){return [item.id,item.label];})));
   if(scenarioEnabled) fragment.appendChild(facetMarkup("scenario","Scenario",manifest.states.map(function(item){return [item.id,item.label];})));
   const resolutions = Array.from(new Set(manifest.captures.map(function(item){return item.resolution.label;})));
@@ -122,24 +136,34 @@ function clearFilters() {
   selected.page = new Set(manifest.pages.map(function(item){return item.id;}));
   selected.scenario = new Set(manifest.states.map(function(item){return item.id;}));
   selected.resolution = new Set(manifest.captures.map(function(item){return item.resolution.label;}));
-  selected.status = new Set(["unreviewed","good","bad"]);
+  selected.status = new Set(STATUSES);
   render(); announce("Showing all screenshots");
 }
+function detectedRect(capture,issue) {
+  const occurrence=issue.occurrences&&issue.occurrences.find(function(item){return item.capture_coordinate_id===capture.coordinate_id;});
+  return (occurrence&&occurrence.rect)||(issue.rects&&issue.rects[capture.coordinate_id])||null;
+}
 function paddedHighlight(capture,issue) {
-  const detected=issue.rects&&issue.rects[capture.coordinate_id];if(!detected)return null;
+  const detected=detectedRect(capture,issue);if(!detected)return null;
   const x=Math.max(0,detected.x-8),y=Math.max(0,detected.y-8),right=Math.min(capture.resolution.width,detected.x+detected.width+8),bottom=Math.min(capture.resolution.height,detected.y+detected.height+8);
   return {x:x,y:y,width:right-x,height:bottom-y};
 }
 function effectiveHighlight(capture,issue) {
-  const overrides=review.captures[capture.coordinate_id]&&review.captures[capture.coordinate_id].issue_highlights;
+  const overrides=review.highlights[capture.coordinate_id];
   return overrides&&Object.prototype.hasOwnProperty.call(overrides,issue.id)?overrides[issue.id]:paddedHighlight(capture,issue);
 }
-function markerFor(capture,issueId) {
-  const issue = issueById.get(issueId||capture.issue_ids[0]);
-  if (issue && isBehaviourIssue(issue)) return undefined;
-  const rect = issue ? effectiveHighlight(capture,issue) : undefined;
-  if (!issue || !rect) return undefined;
-  return node("button", {class:"issue-marker","data-issue-marker":issue.id,style:"left:"+rect.x+"px;top:"+rect.y+"px;width:"+rect.width+"px;height:"+rect.height+"px","aria-label":"Open issue: "+issueTitle(issue),onclick:function(event){openReview(capture.coordinate_id,event.currentTarget);}});
+function cropFor(capture,issue) {
+  const occurrence=issue.occurrences&&issue.occurrences.find(function(item){return item.capture_coordinate_id===capture.coordinate_id;});
+  const cropId=occurrence&&occurrence.crop_asset_id?occurrence.crop_asset_id:issue.crop_asset_id;
+  const crop=cropId?assetById.get(cropId):undefined;
+  return crop&&crop.coordinate_id===capture.coordinate_id?crop:undefined;
+}
+function markerFor(capture,issue,number) {
+  if (isBehaviourIssue(issue)) return undefined;
+  const rect = effectiveHighlight(capture,issue);
+  if (!rect) return undefined;
+  const status=issueStatus(issue.id);
+  return node("button", {class:"issue-marker "+status,"data-issue-marker":issue.id,"data-number":String(number),style:"left:"+rect.x+"px;top:"+rect.y+"px;width:"+rect.width+"px;height:"+rect.height+"px","aria-label":"Issue "+number+": "+issueTitle(issue)+" ("+statusLabel(status)+")",onclick:function(event){openIssue(issue.id,capture.coordinate_id,event.currentTarget);}});
 }
 function imageButton(asset, alt, label, width, height, className) {
   const imageAttributes={src:asset.source_relative_path,alt:alt,loading:"lazy"};
@@ -148,24 +172,49 @@ function imageButton(asset, alt, label, width, height, className) {
   button.addEventListener("click",function(){openLightbox(asset,alt,label,button,width,height);});
   return button;
 }
+function statusPill(issue) { const status=issueStatus(issue.id);return node("span",{class:"pill "+status,"data-issue-status":issue.id,text:statusLabel(status)}); }
+function quickActions(issue,capture) {
+  const status=issueStatus(issue.id);
+  const add=node("button",{class:"quick export-choice","data-storage-action":"",text:status==="export"?"Remove from export":"Add to export","aria-label":(status==="export"?"Remove from export: ":"Add to export: ")+issueTitle(issue),onclick:function(event){setIssueStatus(issue,status==="export"?null:"export",undefined,event.currentTarget);}});
+  const dismiss=node("button",{class:"quick dismiss-choice","data-storage-action":"",text:status==="dismissed"?"Restore":"Dismiss","aria-label":(status==="dismissed"?"Restore: ":"Dismiss: ")+issueTitle(issue),onclick:function(event){setIssueStatus(issue,status==="dismissed"?null:"dismissed",undefined,event.currentTarget);}});
+  add.disabled=!storageAvailable;dismiss.disabled=!storageAvailable;
+  return [add,dismiss];
+}
+function issueRow(issue,capture,number) {
+  const confidence=confidenceFor(issue);
+  const open=node("button",{class:"issue-open",text:issueTitle(issue),"aria-label":"Open issue "+number+": "+issueTitle(issue),onclick:function(event){openIssue(issue.id,capture.coordinate_id,event.currentTarget);}});
+  const meta=[];const subject=issueSubject(issue);if(subject&&!isBehaviourIssue(issue))meta.push("in \u201c"+subject+"\u201d");meta.push(issue.severity+" severity",confidenceLabel(issue).toLowerCase());const range=issueRange(issue);if(range)meta.push(range);
+  const row=node("li",{class:"issue-row "+confidence+" "+issueStatus(issue.id),"data-issue-row":issue.id},[
+    node("span",{class:"issue-number","aria-hidden":"true",text:String(number)}),
+    node("div",{class:"issue-row-main"},[open,node("p",{class:"issue-meta",text:meta.join(" · ")})]),
+    node("div",{class:"issue-row-actions"},[statusPill(issue)].concat(quickActions(issue,capture)))
+  ]);
+  // Highlights on one screenshot can stack; pointing at a row lifts its marker to the top.
+  const raise=function(on){const marker=row.closest(".capture")?.querySelector('[data-issue-marker="'+CSS.escape(issue.id)+'"]');if(marker)marker.classList.toggle("raised",on);};
+  row.addEventListener("mouseenter",function(){raise(true);});row.addEventListener("mouseleave",function(){raise(false);});row.addEventListener("focusin",function(){raise(true);});row.addEventListener("focusout",function(){raise(false);});
+  return row;
+}
 function captureCard(capture, grouped) {
-  const page = pageFor(capture), state = stateFor(capture), asset = assetById.get(capture.full_asset_id), status = statusFor(capture.coordinate_id);
-  const prominentIssueIds=capture.issue_ids.filter(function(issueId){const issue=issueById.get(issueId);return !isBehaviourIssue(issue)&&confidenceFor(issue)==="high";});
+  const page = pageFor(capture), state = stateFor(capture), asset = assetById.get(capture.full_asset_id);
+  const shown=issuesShownOn(capture);
   const condition = scenarioEnabled ? ", "+state.label+" scenario" : "";
   const alt=page.label+" page"+condition+", "+capture.resolution.label+" screenshot";
   const imageControl=imageButton(asset,alt,"Open "+captureName(capture)+" screenshot",capture.resolution.width,capture.resolution.height);
   const stage = node("div", {class:"image-stage","data-width":String(capture.resolution.width),"data-height":String(capture.resolution.height)}, [imageControl]);
-  prominentIssueIds.forEach(function(issueId){const marker=markerFor(capture,issueId);if(marker)stage.appendChild(marker);});
+  shown.forEach(function(issue,index){const marker=markerFor(capture,issue,index+1);if(marker)stage.appendChild(marker);});
+  const counts=STATUSES.map(function(status){const n=captureIssues(capture).filter(function(issue){return issueStatus(issue.id)===status;}).length;return n?n+" "+statusLabel(status).toLowerCase():null;}).filter(Boolean);
+  const summary=capture.issue_ids.length?counts.join(" · "):"No issues found";
   const openImage=node("button",{class:"details-button",text:"Open Image",onclick:function(){openLightbox(asset,alt,"Open "+captureName(capture)+" screenshot",imageControl,capture.resolution.width,capture.resolution.height);}});
-  const issueButton = capture.issue_ids.length ? node("button", {class:"details-button",text:prominentIssueIds.length?"View Concern":"Review Suggestions",onclick:function(event){openReview(capture.coordinate_id,event.currentTarget);}}) : null;
-  const good = node("button", {class:"good-choice","data-storage-action":"",text:prominentIssueIds.length?"Ignore Concern":"Looks Good","aria-pressed":String(status === "good"),onclick:function(event){saveClassification(capture,"good",event.currentTarget);}});good.disabled=!storageAvailable;
-  const bad = node("button", {class:"bad-choice","data-storage-action":"",text:"Request Changes","aria-pressed":String(status === "bad"),onclick:function(event){openReview(capture.coordinate_id,event.currentTarget);}});bad.disabled=!storageAvailable;
-  const actions=[openImage];if(issueButton)actions.push(issueButton);actions.push(node("span",{class:"spacer"}),good,bad);
-  return node("article", {class:"capture","data-capture":capture.coordinate_id}, [
-    node("header",{class:"capture-head"},[node("div",{},[node(grouped?"h3":"h2",{class:"capture-title",text:page.label+(scenarioEnabled?" / "+state.label:"")}),node("div",{class:"capture-path",text:capture.resolution.label})]),node("span",{class:"status "+status,text:statusLabel(status)})]),
-    node("div",{class:"canvas",tabindex:"0","data-label":captureName(capture)+" screenshot canvas","aria-label":captureName(capture)+" screenshot canvas — Actual size at 100%"},[stage]),
-    node("footer",{class:"capture-actions"},actions)
-  ]);
+  const list=node("ol",{class:"issue-list","aria-label":"Issues on "+captureName(capture)});
+  shown.forEach(function(issue,index){list.appendChild(issueRow(issue,capture,index+1));});
+  const children=[
+    node("header",{class:"capture-head"},[node("div",{},[node(grouped?"h3":"h2",{class:"capture-title",text:page.label+(scenarioEnabled?" / "+state.label:"")}),node("div",{class:"capture-path",text:capture.resolution.label})]),node("span",{class:"capture-summary",text:summary})]),
+    node("div",{class:"canvas",tabindex:"0","data-label":captureName(capture)+" screenshot canvas","aria-label":captureName(capture)+" screenshot canvas — Actual size at 100%"},[stage])
+  ];
+  if(shown.length)children.push(list);
+  else if(capture.issue_ids.length)children.push(node("p",{class:"help issue-list-empty",text:"Issues on this screenshot are hidden by the current filters."}));
+  children.push(node("footer",{class:"capture-actions"},[openImage]));
+  return node("article", {class:"capture","data-capture":capture.coordinate_id}, children);
 }
 function applyZoom() {
   document.querySelectorAll(".capture").forEach(function(card) {
@@ -218,12 +267,14 @@ function trapLightboxFocus(event) {
   if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}
   else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}
 }
+function statusCounts() { const counts={unreviewed:0,export:0,dismissed:0};manifest.issues.forEach(function(issue){counts[issueStatus(issue.id)]++;});return counts; }
 function updateProgress() {
-  const reviewed = manifest.captures.filter(function(capture){return statusFor(capture.coordinate_id)!=="unreviewed";}).length;
-  const requests = Object.values(review.captures).filter(function(item){return item.classification==="bad" && item.requested_change;}).length;
-  document.getElementById("progress").textContent = reviewed+" of "+manifest.captures.length+" reviewed";
-  document.getElementById("exportCount").textContent = "("+requests+")";
-  document.getElementById("exportButton").setAttribute("aria-label","Export changes, "+requests+" "+(requests===1?"request":"requests"));
+  const counts=statusCounts();
+  document.getElementById("progress").textContent = counts.unreviewed+" to review · "+counts.export+" in export · "+counts.dismissed+" dismissed";
+  document.getElementById("exportCount").textContent = "("+counts.export+")";
+  const button=document.getElementById("exportButton");
+  button.setAttribute("aria-label","Export, "+counts.export+" "+(counts.export===1?"issue":"issues"));
+  button.disabled=!storageAvailable||counts.export===0;
 }
 function updateStorageControls() { document.querySelectorAll("[data-storage-action]").forEach(function(control){control.disabled=!storageAvailable;}); }
 function showStorageError(message) { storageAvailable=false;const error=document.getElementById("storageError");document.getElementById("storageErrorText").textContent=message;error.hidden=false;updateStorageControls();announce(message); }
@@ -234,7 +285,7 @@ function render() {
   const visible = manifest.captures.filter(matches), list = document.getElementById("captureList"); list.replaceChildren();
   document.getElementById("filterSummary").textContent = visible.length===manifest.captures.length ? "Showing all "+manifest.captures.length+" screenshots" : "Showing "+visible.length+" of "+manifest.captures.length+" screenshots";
   const high=manifest.issues.filter(function(issue){return confidenceFor(issue)==="high";}).length,confirmation=manifest.issues.filter(function(issue){return confidenceFor(issue)==="needs-confirmation";}).length,noise=manifest.issues.filter(function(issue){return confidenceFor(issue)==="likely-noise";}).length;
-  document.getElementById("resultsSummary").textContent = high+" high-confidence "+(high===1?"concern":"concerns")+", "+confirmation+" to confirm, "+noise+" likely noise. "+visible.length+" "+(visible.length===1?"screenshot":"screenshots")+" match your filters.";
+  document.getElementById("resultsSummary").textContent = manifest.issues.length+" "+(manifest.issues.length===1?"issue":"issues")+": "+high+" likely "+(high===1?"defect":"defects")+", "+confirmation+" to confirm, "+noise+" likely noise. "+visible.length+" "+(visible.length===1?"screenshot":"screenshots")+" match your filters.";
   if (visible.length && scenarioEnabled) manifest.states.forEach(function(state,index){const captures=visible.filter(function(capture){return capture.state_id===state.id;});if(!captures.length)return;const headingId="scenario-group-"+index,section=node("section",{class:"scenario-group","aria-labelledby":headingId},[node("h2",{class:"scenario-group-title",id:headingId,text:state.label})]);captures.forEach(function(capture){section.appendChild(captureCard(capture,true));});list.appendChild(section);});
   else if (visible.length) visible.forEach(function(capture){list.appendChild(captureCard(capture,false));});
   else list.appendChild(node("section",{class:"empty"},[node("h2",{text:"No screenshots match these filters"}),node("p",{text:"Change a filter or show all screenshots."}),node("button",{text:"Show All Screenshots",onclick:clearFilters})]));
@@ -246,13 +297,17 @@ async function postJson(path, body) {
   if (!response.ok) throw new Error(payload.error || "Request failed");
   return payload;
 }
-async function saveClassification(capture, classification, trigger) {
+async function setIssueStatus(issue, status, note, trigger) {
+  const body={issueId:issue.id,status:status};if(note!==undefined)body.note=note;
   try {
-    review = await postJson("api/review",{coordinateId:capture.coordinate_id,classification:classification});
+    review = await postJson("api/review",body);
+    noteDirty=false;
+    const drawerOpen=document.getElementById("drawer").open&&drawerMode==="issue"&&activeIssueId===issue.id;
     render();
-    requestAnimationFrame(function(){const replacement=document.querySelector('[data-capture="'+capture.coordinate_id+'"] [class="'+(classification==="good"?"good-choice":"bad-choice")+'"]');(replacement||document.getElementById("resultsSummary")).focus();});
-    announce("Marked "+statusLabel(classification)+". "+captureName(capture)+".");
-  } catch (error) { trigger.focus(); showStorageError("Review storage unavailable. Feedback and exports cannot be saved."); }
+    if(drawerOpen){renderIssueDrawer();}
+    else requestAnimationFrame(function(){const replacement=document.querySelector('[data-issue-row="'+CSS.escape(issue.id)+'"] .issue-open');(replacement||document.getElementById("resultsSummary")).focus();});
+    announce(status===null?"Cleared: "+issueTitle(issue):statusLabel(status)+": "+issueTitle(issue));
+  } catch (error) { if(trigger&&trigger.isConnected)trigger.focus(); if(document.getElementById("drawer").open)appendError("Could not save. "+error.message,true); showStorageError("Review storage unavailable. Decisions and exports cannot be saved."); }
 }
 function openDrawer(title, mode, trigger) {
   if(drawerMode==="export")handoffAttempt++;
@@ -290,65 +345,74 @@ function addHighlightEditor(stage,capture,issue) {
 function refreshHighlight(capture,issue) {
   const stage=document.querySelector('[data-highlight-stage="'+CSS.escape(capture.coordinate_id)+'"]');if(stage){stage.querySelector('[data-highlight-editor="'+CSS.escape(issue.id)+'"]')?.remove();addHighlightEditor(stage,capture,issue);}
   const control=document.querySelector('[data-highlight-control="'+CSS.escape(issue.id)+'"]');if(control){const removed=effectiveHighlight(capture,issue)===null;control.textContent=removed?"Restore Highlight":"Remove Highlight";control.setAttribute("aria-label",(removed?"Restore":"Remove")+" highlight for "+issueTitle(issue));}
-  const card=document.querySelector('[data-capture="'+CSS.escape(capture.coordinate_id)+'"]');if(card){card.querySelector('[data-issue-marker="'+CSS.escape(issue.id)+'"]')?.remove();const marker=markerFor(capture,issue.id);if(marker)card.querySelector(".image-stage").appendChild(marker);}
+  const card=document.querySelector('[data-capture="'+CSS.escape(capture.coordinate_id)+'"]');if(card){const existing=card.querySelector('[data-issue-marker="'+CSS.escape(issue.id)+'"]'),number=existing?Number(existing.dataset.number):issuesShownOn(capture).indexOf(issue)+1;existing?.remove();const marker=markerFor(capture,issue,number);if(marker)card.querySelector(".image-stage").appendChild(marker);}
 }
-async function persistIssueHighlight(intent,queue) { const capture=intent.capture,issue=intent.issue,rect=intent.rect,scrollState=intent.scrollState,drawerBody=document.getElementById("drawerBody"),imageViewport=drawerBody&&drawerBody.querySelector(".drawer-image");try { review=await postJson("api/review",{coordinateId:capture.coordinate_id,highlightIssueId:issue.id,highlightRect:rect});if(queue.pending)return;refreshHighlight(capture,issue);if(scrollState&&document.getElementById("drawer").open&&drawerMode==="review"){const editor=document.querySelector('[data-highlight-editor="'+CSS.escape(issue.id)+'"]'),next=intent.focusTarget==="resize"&&editor?editor.querySelector(".highlight-resize"):editor;if(next){next.focus({preventScroll:true});drawerBody.scrollTop=scrollState.body;if(imageViewport){imageViewport.scrollTop=scrollState.imageTop;imageViewport.scrollLeft=scrollState.imageLeft;}window.scrollTo(scrollState.windowX,scrollState.windowY);}}announce(rect?"Highlight updated for "+issueTitle(issue):"Highlight removed for "+issueTitle(issue));}catch(error){appendError("Could not save highlight. "+error.message,false);announce("Could not save highlight");} }
+async function persistIssueHighlight(intent,queue) { const capture=intent.capture,issue=intent.issue,rect=intent.rect,scrollState=intent.scrollState,drawerBody=document.getElementById("drawerBody"),imageViewport=drawerBody&&drawerBody.querySelector(".drawer-image");try { review=await postJson("api/review",{coordinateId:capture.coordinate_id,highlightIssueId:issue.id,highlightRect:rect});if(queue.pending)return;refreshHighlight(capture,issue);if(scrollState&&document.getElementById("drawer").open&&drawerMode==="issue"){const editor=document.querySelector('[data-highlight-editor="'+CSS.escape(issue.id)+'"]'),next=intent.focusTarget==="resize"&&editor?editor.querySelector(".highlight-resize"):editor;if(next){next.focus({preventScroll:true});drawerBody.scrollTop=scrollState.body;if(imageViewport){imageViewport.scrollTop=scrollState.imageTop;imageViewport.scrollLeft=scrollState.imageLeft;}window.scrollTo(scrollState.windowX,scrollState.windowY);}}announce(rect?"Highlight updated for "+issueTitle(issue):"Highlight removed for "+issueTitle(issue));}catch(error){appendError("Could not save highlight. "+error.message,false);announce("Could not save highlight");} }
 function saveIssueHighlight(capture,issue,rect,focusTarget) { const key=capture.coordinate_id+"\u0000"+issue.id,drawerBody=document.getElementById("drawerBody"),imageViewport=drawerBody&&drawerBody.querySelector(".drawer-image"),intent={capture:capture,issue:issue,rect:rect?{x:rect.x,y:rect.y,width:rect.width,height:rect.height}:null,focusTarget:focusTarget,scrollState:focusTarget?{body:drawerBody.scrollTop,imageTop:imageViewport?imageViewport.scrollTop:0,imageLeft:imageViewport?imageViewport.scrollLeft:0,windowX:window.scrollX,windowY:window.scrollY}:null};let queue=highlightSaveQueues.get(key);if(!queue){queue={running:false,pending:null};highlightSaveQueues.set(key,queue);}queue.pending=intent;if(queue.running)return;queue.running=true;(async function(){while(queue.pending){const next=queue.pending;queue.pending=null;await persistIssueHighlight(next,queue);}queue.running=false;highlightSaveQueues.delete(key);})(); }
-function appendFindingDetails(body,title,items) {
-  body.appendChild(node("h3",{text:title}));
-  if(!items.length){body.appendChild(node("p",{class:"help",text:"No "+title.toLowerCase()+" findings for this screenshot."}));return;}
-  items.forEach(function(issue){const confidence=confidenceFor(issue),count=issue.occurrence_count||issue.capture_coordinate_ids.length,groups=presentationGroupsFor(issue);const details=node("details",{class:"issue-box "+confidence,...(confidence==="high"?{open:""}:{})},[node("summary",{text:issueTitle(issue)}),node("p",{class:"issue-meta",text:confidenceLabel(issue)+" · 1 concern across "+issue.capture_coordinate_ids.length+" "+(issue.capture_coordinate_ids.length===1?"size":"sizes")+" · "+count+" "+(count===1?"occurrence":"occurrences")}),node("p",{text:issueOutcome(issue)}),...(groups.length?groups.map(presentationGroupEvidence):[node("p",{text:"Affected sizes: "+affectedSizeLabel(issue)})]),node("p",{text:"Impact if confirmed: "+issue.severity+" severity."})]);if(issue.confidence_reasons&&issue.confidence_reasons.length){const reasons=node("ul");issue.confidence_reasons.forEach(function(reason){reasons.appendChild(node("li",{text:reason}));});details.appendChild(reasons);}if(issue.occurrences&&issue.occurrences.length){const occurrenceList=node("ul");issue.occurrences.forEach(function(occurrence){occurrenceList.appendChild(node("li",{text:occurrenceLabel(occurrence,issue)}));});details.appendChild(node("details",{},[node("summary",{text:"Occurrences ("+issue.occurrences.length+")"}),occurrenceList]));}body.appendChild(details);});
+function openIssue(issueId, coordinateId, trigger) {
+  activeIssueId=issueId; activeCoordinateId=coordinateId; noteDirty=false;
+  openDrawer("Issue","issue",trigger);
+  renderIssueDrawer();
 }
-function openReview(id, trigger) {
-  activeId=id; const capture=manifest.captures.find(function(item){return item.coordinate_id===id;});
-  const page=pageFor(capture), state=stateFor(capture), asset=assetById.get(capture.full_asset_id), saved=review.captures[id]&&review.captures[id].requested_change,draft=readDraft(id);
-  selectedReviewIssues=new Set(draft?draft.selected:(saved?saved.selected_issue_ids||[]:[]));
-  draftDirty=Boolean(draft);
-  requestWasValid=null;
-  openDrawer("Review this screenshot","review",trigger);
-  const body=document.getElementById("drawerBody"); body.appendChild(node("p",{},[node("strong",{text:captureName(capture)})]));
-  body.appendChild(node("p",{class:"help",text:"These are machine-generated review leads, not approved work. High-confidence concerns appear first; expand any group for evidence."}));
-  const captureIssues=capture.issue_ids.map(function(issueId){return issueById.get(issueId);}).filter(Boolean);
-  appendFindingDetails(body,"Visual",captureIssues.filter(function(issue){return !isBehaviourIssue(issue);}));
-  appendFindingDetails(body,"Behaviour",captureIssues.filter(isBehaviourIssue));
-  const fullAlt="Full "+page.label+(scenarioEnabled?", "+state.label+" scenario":"")+" screenshot at "+capture.resolution.label;
-  const highlightStage=node("div",{class:"highlight-stage","data-highlight-stage":capture.coordinate_id},[imageButton(asset,fullAlt,"Open full "+captureName(capture)+" screenshot",capture.resolution.width,capture.resolution.height)]);captureIssues.filter(function(issue){return !isBehaviourIssue(issue);}).forEach(function(issue){addHighlightEditor(highlightStage,capture,issue);});body.appendChild(node("div",{class:"drawer-image"},[highlightStage]));
-  captureIssues.filter(function(issue){return !isBehaviourIssue(issue);}).forEach(function(issue){const removed=effectiveHighlight(capture,issue)===null;const control=node("button",{type:"button","data-highlight-control":issue.id,text:removed?"Restore Highlight":"Remove Highlight","aria-label":(removed?"Restore":"Remove")+" highlight for "+issueTitle(issue),onclick:function(){saveIssueHighlight(capture,issue,effectiveHighlight(capture,issue)===null?paddedHighlight(capture,issue):null);}});body.appendChild(node("div",{class:"highlight-controls"},[control,node("span",{class:"help",text:"Drag the highlight to move it. Drag the corner handle to resize. Focus either control and use the arrow keys for precise changes."})]));});
-  capture.issue_ids.forEach(function(issueId){const issue=issueById.get(issueId),occurrence=issue.occurrences&&issue.occurrences.find(function(item){return item.capture_coordinate_id===capture.coordinate_id;}),cropId=occurrence&&occurrence.crop_asset_id?occurrence.crop_asset_id:issue.crop_asset_id;if(cropId){const crop=assetById.get(cropId);if(crop)body.appendChild(imageButton(crop,"Issue close-up for "+issueTitle(issue),"Open issue close-up for "+issueTitle(issue),undefined,undefined,"crop-open"));}});
-  body.appendChild(node("label",{class:"text-label",for:"changeMessage",text:"What useful outcome should change?"}));
-  const textarea=node("textarea",{id:"changeMessage"}); textarea.value=draft?draft.text:(saved?saved.requested_change:"");textarea.addEventListener("input",function(){persistDraft();updateRequestValidity(true);}); body.appendChild(textarea);
-  body.appendChild(node("p",{class:"help request-guidance",id:"requestGuidance",role:"status","aria-live":"polite",tabindex:"-1",text:"Write a reviewer-approved outcome in at least three words. Attaching a suggestion alone does not approve it."}));
-  body.appendChild(node("h3",{text:"Applies to"})); body.appendChild(node("p",{class:"help",text:"The current screenshot is selected. Add screenshots only when the same change applies."}));
-  const selection=node("div",{class:"selection-list"});
-  manifest.captures.forEach(function(candidate){const input=node("input",{type:"checkbox",name:"affected",value:candidate.coordinate_id});input.checked=candidate.coordinate_id===id || Boolean(draft?draft.affected.includes(candidate.coordinate_id):saved&&saved.affected_coordinate_ids.includes(candidate.coordinate_id));input.disabled=candidate.coordinate_id===id;input.addEventListener("change",function(){renderApplicableIssues();persistDraft();});selection.appendChild(node("label",{class:"check"},[input,node("span",{text:captureName(candidate)+(candidate.coordinate_id===id?" (current)":"")})]));}); body.appendChild(selection);
-  body.appendChild(node("h3",{text:"Machine suggestions to promote"}));
-  body.appendChild(node("p",{class:"help",text:"Checking a group attaches its evidence. It becomes reviewer-approved work only when you save it with the written outcome above."}));
-  const issueSelection=node("div",{class:"selection-list",id:"issueSelection"});
-  body.appendChild(issueSelection);renderApplicableIssues();
+function renderIssueDrawer() {
+  const issue=issueById.get(activeIssueId),capture=manifest.captures.find(function(item){return item.coordinate_id===activeCoordinateId;});
+  const page=pageFor(capture),state=stateFor(capture),asset=assetById.get(capture.full_asset_id),status=issueStatus(issue.id),behaviour=isBehaviourIssue(issue);
+  const body=document.getElementById("drawerBody"),actions=document.getElementById("drawerActions");
+  const pendingNote=document.getElementById("issueNote")?document.getElementById("issueNote").value:null;
+  body.replaceChildren(); actions.replaceChildren();
+  document.getElementById("drawerTitle").textContent=issueTitle(issue);
+  body.appendChild(node("p",{class:"issue-badges"},[node("span",{class:"badge severity-"+issue.severity,text:issue.severity+" severity"}),node("span",{class:"badge "+confidenceFor(issue),text:confidenceLabel(issue)})].concat(behaviour?[node("span",{class:"badge type",text:typeLabel(issue)})]:[]).concat([statusPill(issue)])));
+  const subject=issueSubject(issue);if(subject&&!behaviour)body.appendChild(node("p",{class:"issue-subject",text:"In \u201c"+subject+"\u201d"}));
+  body.appendChild(node("p",{class:"help",text:captureName(capture)}));
+  const crop=behaviour?undefined:cropFor(capture,issue);
+  if(crop){body.appendChild(node("h3",{text:"Close-up"}));body.appendChild(node("div",{class:"issue-crop"},[imageButton(crop,"Close-up of "+issueTitle(issue)+" at "+capture.resolution.label,"Open close-up of "+issueTitle(issue),crop.width,crop.height,"crop-open")]));}
+  body.appendChild(node("h3",{text:"What was found"}));
+  body.appendChild(node("p",{class:"issue-finding",text:issueFinding(issue,capture)}));
+  const range=issueRange(issue);if(range)body.appendChild(node("p",{class:"issue-range",text:capitalize(range)+"."}));
+  const elsewhere=issue.capture_coordinate_ids.filter(function(id){return id!==capture.coordinate_id;}).map(function(id){return manifest.captures.find(function(item){return item.coordinate_id===id;});}).filter(Boolean);
+  if(elsewhere.length)body.appendChild(node("p",{class:"help",text:"Also on: "+elsewhere.map(captureName).join("; ")}));
+  if(issue.confidence_reasons&&issue.confidence_reasons.length){const reasons=node("ul",{class:"reasons"});issue.confidence_reasons.forEach(function(reason){reasons.appendChild(node("li",{text:reason}));});body.appendChild(reasons);}
+  if(behaviour&&issue.occurrences&&issue.occurrences.length){body.appendChild(node("h3",{text:"Evidence"}));const list=node("ul",{class:"evidence"});issue.occurrences.forEach(function(occurrence){list.appendChild(node("li",{text:occurrenceLabel(occurrence,issue)}));});body.appendChild(list);}
+  if(issue.heuristic_suggestion||issue.ai_recommendation_status.status==="ok"){body.appendChild(node("h3",{text:"Suggested fix"}));if(issue.heuristic_suggestion)body.appendChild(node("p",{text:issue.heuristic_suggestion}));if(issue.ai_recommendation_status.status==="ok")body.appendChild(node("p",{text:"AI ("+issue.ai_recommendation_status.model+"): "+issue.ai_recommendation_status.text}));}
+  body.appendChild(node("label",{class:"text-label",for:"issueNote",text:"Note for the handoff (optional)"}));
+  const textarea=node("textarea",{id:"issueNote",rows:"3",placeholder:"Anything the person or agent fixing this should know."});textarea.value=pendingNote!==null?pendingNote:issueNote(issue.id);textarea.addEventListener("input",function(){noteDirty=textarea.value.trim()!==issueNote(issue.id);const save=document.getElementById("saveNote");if(save)save.hidden=!noteDirty||status==="unreviewed";});body.appendChild(textarea);
+  if(!behaviour){
+    const highlightDetails=node("details",{class:"issue-highlight"},[node("summary",{text:"Adjust the highlight"})]);
+    const fullAlt="Full "+page.label+(scenarioEnabled?", "+state.label+" scenario":"")+" screenshot at "+capture.resolution.label;
+    const highlightStage=node("div",{class:"highlight-stage","data-highlight-stage":capture.coordinate_id},[imageButton(asset,fullAlt,"Open full "+captureName(capture)+" screenshot",capture.resolution.width,capture.resolution.height)]);addHighlightEditor(highlightStage,capture,issue);
+    highlightDetails.appendChild(node("div",{class:"drawer-image"},[highlightStage]));
+    const removed=effectiveHighlight(capture,issue)===null;const control=node("button",{type:"button","data-highlight-control":issue.id,text:removed?"Restore Highlight":"Remove Highlight","aria-label":(removed?"Restore":"Remove")+" highlight for "+issueTitle(issue),onclick:function(){saveIssueHighlight(capture,issue,effectiveHighlight(capture,issue)===null?paddedHighlight(capture,issue):null);}});
+    highlightDetails.appendChild(node("div",{class:"highlight-controls"},[control,node("span",{class:"help",text:"Drag the highlight to move it. Drag the corner handle to resize. Focus either control and use the arrow keys for precise changes."})]));
+    body.appendChild(highlightDetails);
+  }
   const details=node("details",{},[node("summary",{text:"Technical details"})]);
-  capture.issue_ids.forEach(function(issueId){const issue=issueById.get(issueId);const occurrence=issue.occurrences&&issue.occurrences.find(function(item){return item.capture_coordinate_id===capture.coordinate_id;});const cropId=occurrence&&occurrence.crop_asset_id?occurrence.crop_asset_id:issue.crop_asset_id;const crop=cropId?assetById.get(cropId):undefined;details.appendChild(node("p",{text:issue.type+", severity "+issue.severity+", confidence "+confidenceFor(issue)+". Technical locator: "+(occurrence&&occurrence.technical_locator||issue.technical_locator||issue.selector)}));details.appendChild(node("p",{text:"Machine suggestion: "+issue.heuristic_suggestion}));details.appendChild(node("p",{text:"Recommendation source: "+(issue.ai_recommendation_status.status==="ok"?"AI recommendation from "+issue.ai_recommendation_status.model:"Rule-based finding; AI unavailable: "+issue.ai_recommendation_status.reason)}));if(crop)details.appendChild(node("p",{text:"Close-up: "+crop.media_type+", "+crop.byte_length+" bytes, SHA-256 "+crop.sha256}));});
-  details.appendChild(node("p",{text:"Full screenshot: "+asset.media_type+", "+asset.byte_length+" bytes, SHA-256 "+asset.sha256})); body.appendChild(details);
-  const actions=document.getElementById("drawerActions");actions.appendChild(node("button",{text:"Cancel",onclick:closeDrawer}));const save=node("button",{class:"primary","data-storage-action":"",id:"saveRequest",text:"Save Change Request",onclick:saveRequest});save.disabled=!storageAvailable;actions.appendChild(save);updateRequestValidity(false);
-}
-async function saveRequest() {
-  const textarea=document.getElementById("changeMessage"), text=textarea.value.trim();
-  const affected=Array.from(document.querySelectorAll('input[name="affected"]:checked')).map(function(input){return input.value;}); if(!affected.includes(activeId)) affected.push(activeId);
-  const selectedIssues=Array.from(document.querySelectorAll('input[name="selectedIssue"]:checked:not(:disabled)')).map(function(input){return input.value;});
-  if(!usefulOutcome(text)){const guidance=document.getElementById("requestGuidance");guidance.classList.add("invalid");guidance.textContent="Write a useful reviewer-approved outcome in at least three words before saving.";guidance.focus();announce(guidance.textContent);return;}
-  try { review=await postJson("api/review",{coordinateId:activeId,classification:"bad",requestedChange:text,affectedCoordinateIds:affected,selectedIssueIds:selectedIssues}); clearDraft(activeId);closeDrawer(); render(); requestAnimationFrame(function(){const target=document.querySelector('[data-capture="'+activeId+'"] .bad-choice')||document.getElementById("resultsSummary");target.focus();}); announce("Reviewer-approved work saved. Marked Change requested."); }
-  catch(error){appendError("Could not save. Your text is still here. Retry after reconnecting storage. "+error.message,true);textarea.focus();showStorageError("Review storage unavailable. Feedback and exports cannot be saved.");}
+  const occurrence=issue.occurrences&&issue.occurrences.find(function(item){return item.capture_coordinate_id===capture.coordinate_id;});
+  details.appendChild(node("p",{text:"Type "+issue.type+", severity "+issue.severity+", confidence "+confidenceFor(issue)+"."}));
+  details.appendChild(node("p",{text:"Element: "+((occurrence&&occurrence.technical_locator)||issue.technical_locator||issue.selector)+((occurrence&&occurrence.other_technical_locator)||issue.other_selector?" and "+((occurrence&&occurrence.other_technical_locator)||issue.other_selector):"")}));
+  details.appendChild(node("p",{text:"Summary: "+issue.description}));
+  if(issue.occurrences&&issue.occurrences.length>1){const list=node("ul");issue.occurrences.forEach(function(item){list.appendChild(node("li",{text:occurrenceLabel(item,issue)}));});details.appendChild(node("p",{text:"Occurrences ("+issue.occurrences.length+")"}));details.appendChild(list);}
+  details.appendChild(node("p",{text:"Full screenshot: "+asset.media_type+", "+asset.byte_length+" bytes, SHA-256 "+asset.sha256}));
+  if(crop)details.appendChild(node("p",{text:"Close-up: "+crop.media_type+", "+crop.byte_length+" bytes, SHA-256 "+crop.sha256}));
+  body.appendChild(details);
+  actions.appendChild(node("button",{text:"Close",onclick:closeDrawer}));
+  const saveNote=node("button",{id:"saveNote","data-storage-action":"",text:"Save note",onclick:function(event){setIssueStatus(issue,status,document.getElementById("issueNote").value,event.currentTarget);}});saveNote.hidden=true;saveNote.disabled=!storageAvailable;actions.appendChild(saveNote);
+  const dismiss=node("button",{class:"dismiss-choice","data-storage-action":"",id:"dismissIssue",text:status==="dismissed"?"Restore":"Dismiss",onclick:function(event){setIssueStatus(issue,status==="dismissed"?null:"dismissed",document.getElementById("issueNote").value,event.currentTarget);}});dismiss.disabled=!storageAvailable;actions.appendChild(dismiss);
+  const add=node("button",{class:"primary export-choice","data-storage-action":"",id:"addToExport",text:status==="export"?"Remove from export":"Add to export",onclick:function(event){setIssueStatus(issue,status==="export"?null:"export",document.getElementById("issueNote").value,event.currentTarget);}});add.disabled=!storageAvailable;actions.appendChild(add);
 }
 function openExport(trigger) {
-  openDrawer("Export reviewer-approved work","export",trigger);const body=document.getElementById("drawerBody");const bad=manifest.captures.filter(function(capture){return statusFor(capture.coordinate_id)==="bad";});let valid=true;
-  body.appendChild(node("p",{text:bad.length+" reviewer-approved "+(bad.length===1?"change":"changes")}));
-  bad.forEach(function(capture){const request=review.captures[capture.coordinate_id].requested_change;const section=node("section",{class:"export-item"},[node("strong",{text:captureName(capture)})]);if(request&&usefulOutcome(request.requested_change)){section.appendChild(node("p",{text:request.requested_change}));const list=node("ul");request.affected_coordinate_ids.forEach(function(id){const item=manifest.captures.find(function(candidate){return candidate.coordinate_id===id;});list.appendChild(node("li",{text:captureName(item)}));});section.appendChild(list);}else{valid=false;section.appendChild(node("p",{class:"error-summary",text:"Add a useful reviewer-authored outcome before export. Machine suggestions alone are not approved work."}));}body.appendChild(section);});
-  if(!bad.length) valid=false;
+  openDrawer("Export","export",trigger);const body=document.getElementById("drawerBody");
+  const exported=manifest.issues.filter(function(issue){return issueStatus(issue.id)==="export";});const valid=exported.length>0;
+  body.appendChild(node("p",{text:exported.length+" "+(exported.length===1?"issue":"issues")+" in the export."}));
+  if(!valid)body.appendChild(node("p",{class:"help",text:"Nothing is in the export yet. Open an issue and choose Add to export."}));
+  const list=node("ul",{class:"export-list"});
+  exported.forEach(function(issue){const where=issue.capture_coordinate_ids.map(function(id){return manifest.captures.find(function(item){return item.coordinate_id===id;});}).filter(Boolean).map(captureName);const remove=node("button",{class:"quick","data-storage-action":"",text:"Remove","aria-label":"Remove from export: "+issueTitle(issue),onclick:function(event){setIssueStatus(issue,null,undefined,event.currentTarget).then(function(){if(document.getElementById("drawer").open&&drawerMode==="export")openExport(trigger);});}});remove.disabled=!storageAvailable;list.appendChild(node("li",{class:"export-item"},[node("div",{},[node("strong",{text:issueTitle(issue)}),node("p",{class:"help",text:where.join("; ")+(issueNote(issue.id)?" — Note: "+issueNote(issue.id):"")})]),remove]));});
+  if(valid)body.appendChild(list);
   const audiences=node("fieldset",{class:"mode-options"},[node("legend",{text:"Who will use this handoff?"})]);
-  [["human","Human","Useful review context without internal technical evidence."],["ai","AI","Structured JSON with the full technical context."]].forEach(function(option){const input=node("input",{type:"radio",name:"handoffAudience",value:option[0]});input.checked=option[0]==="human";input.addEventListener("change",updateHandoffAudience);audiences.appendChild(node("label",{class:"mode-choice"},[input,node("strong",{text:option[1]}),node("span",{class:"help",text:option[2]})]));});body.appendChild(audiences);
+  [["human","Human","Readable list of the selected issues, what was found, and where."],["ai","AI","Structured JSON with locators, rectangles, and screenshot hashes."]].forEach(function(option){const input=node("input",{type:"radio",name:"handoffAudience",value:option[0]});input.checked=option[0]==="human";input.addEventListener("change",updateHandoffAudience);audiences.appendChild(node("label",{class:"mode-choice"},[input,node("strong",{text:option[1]}),node("span",{class:"help",text:option[2]})]));});body.appendChild(audiences);
   const deliveries=node("fieldset",{class:"mode-options"},[node("legend",{text:"How should it be delivered?"})]);
-  [["generate","Copy and paste","Generate a readable, selectable handoff here with a Copy action."],["save","Save to file","Write the handoff to the destination path below."]].forEach(function(option){const input=node("input",{type:"radio",name:"handoffMode",value:option[0]});input.checked=option[0]==="generate";input.addEventListener("change",updateHandoffDelivery);deliveries.appendChild(node("label",{class:"mode-choice"},[input,node("strong",{text:option[1]}),node("span",{class:"help",text:option[2]})]));});body.appendChild(deliveries);
+  [["generate","Copy and paste","Generate the handoff here with a Copy action."],["save","Save to file","Write the handoff to the destination path below."]].forEach(function(option){const input=node("input",{type:"radio",name:"handoffMode",value:option[0]});input.checked=option[0]==="generate";input.addEventListener("change",updateHandoffDelivery);deliveries.appendChild(node("label",{class:"mode-choice"},[input,node("strong",{text:option[1]}),node("span",{class:"help",text:option[2]})]));});body.appendChild(deliveries);
   const formats=node("fieldset",{class:"mode-options",id:"handoffFormatChoices",hidden:""},[node("legend",{text:"File format"})]);
-  [["txt","TXT","Plain text matching Human copy and paste exactly."],["pdf","PDF","A formatted document with the affected screenshots."]].forEach(function(option){const input=node("input",{type:"radio",name:"handoffFileFormat",value:option[0]});input.checked=option[0]==="txt";input.addEventListener("change",updateHandoffFileFormat);formats.appendChild(node("label",{class:"mode-choice"},[input,node("strong",{text:option[1]}),node("span",{class:"help",text:option[2]})]));});body.appendChild(formats);
+  [["txt","TXT","Plain text, the same as copy and paste."],["pdf","PDF","A document with a close-up of every selected issue."]].forEach(function(option){const input=node("input",{type:"radio",name:"handoffFileFormat",value:option[0]});input.checked=option[0]==="txt";input.addEventListener("change",updateHandoffFileFormat);formats.appendChild(node("label",{class:"mode-choice"},[input,node("strong",{text:option[1]}),node("span",{class:"help",text:option[2]})]));});body.appendChild(formats);
   handoffPathEdited=false;const initialPath=adaptHandoffPath(settings.default_handoff_path,"human","txt");const pathInput=node("input",{class:"path-input",id:"handoffPath",type:"text",value:initialPath});pathInput.addEventListener("input",function(){handoffPathEdited=true;});
   const pathWrap=node("div",{class:"handoff-path",id:"handoffPathWrap",hidden:""},[node("label",{class:"text-label",for:"handoffPath",text:"Destination path"}),pathInput,node("p",{class:"help",text:"Use an absolute path. Human TXT uses .txt, Human PDF uses .pdf, and AI uses .json. Until you edit this path, its extension adapts to the selected choices. Existing different content will not be overwritten."})]);body.appendChild(pathWrap);
   body.appendChild(node("div",{id:"exportResult","aria-live":"polite"}));
@@ -372,17 +436,17 @@ function sourceIdentityRow() { const identity=manifest.source_report.source_sha;
 function infoSection(title,rows) { return node("section",{class:"info-section"},[node("h3",{text:title}),node("div",{class:"info-card"},rows)]); }
 function openSettings(trigger) {
   openDrawer("Settings","settings",trigger);const body=document.getElementById("drawerBody");
-  const reviewed=manifest.captures.filter(function(capture){return statusFor(capture.coordinate_id)!=="unreviewed";}).length;
+  const counts=statusCounts();
   const captured=new Intl.DateTimeFormat(undefined,{dateStyle:"medium",timeStyle:"short"}).format(new Date(report.createdAt));
   body.appendChild(infoSection("Review run",[
-    copyInfoRow("Source",report.url,"source URL"),infoRow("Captured",captured),infoRow("Pages",String(manifest.pages.length)),infoRow("Screenshots",String(manifest.captures.length)),infoRow("Review progress",reviewed+" of "+manifest.captures.length+" reviewed")
+    copyInfoRow("Source",report.url,"source URL"),infoRow("Captured",captured),infoRow("Pages",String(manifest.pages.length)),infoRow("Screenshots",String(manifest.captures.length)),infoRow("Issues",manifest.issues.length+" found: "+counts.export+" in export, "+counts.dismissed+" dismissed, "+counts.unreviewed+" to review")
   ]));
   const input=node("input",{class:"path-input",id:"defaultHandoffPath",type:"text",value:settings.default_handoff_path});
   const files=infoSection("Files and storage",[
-    infoRow("Feedback","review-state.json in this report directory"),
+    infoRow("Decisions","review-state.json in this report directory"),
     infoRow("Exports","Saved only to a destination you choose"),
     node("div",{class:"info-field"},[node("label",{class:"text-label",for:"defaultHandoffPath",text:"Default handoff path"}),input,node("p",{class:"help",text:"Prefills Save to file. Its .txt, .pdf, or .json extension adapts to the selected handoff choices until you edit the destination."})]),
-    node("div",{class:"info-field"},[node("strong",{text:"Local-only review"}),node("p",{class:"help",text:"Review feedback and exports stay on this machine unless you explicitly copy or save them elsewhere."})])
+    node("div",{class:"info-field"},[node("strong",{text:"Local-only review"}),node("p",{class:"help",text:"Decisions and exports stay on this machine unless you explicitly copy or save them elsewhere."})])
   ]);body.appendChild(files);
   body.appendChild(node("details",{class:"settings-technical"},[
     node("summary",{text:"Technical details"}),
@@ -398,9 +462,6 @@ function openSettings(trigger) {
 }
 async function stopLocalService(){try{await postJson("api/stop",{});document.body.replaceChildren(node("main",{},[node("h1",{text:"Viewport QA stopped"}),node("p",{text:"You can close this tab."})]));}catch(error){appendError("Could not stop Viewport QA. "+error.message,false);}}
 async function saveSettingsAndClose() { const input=document.getElementById("defaultHandoffPath");try{settings=await postJson("api/settings",{defaultHandoffPath:input.value});closeDrawer();announce("Settings saved");}catch(error){appendError("Could not save settings. "+error.message,false);input.focus();announce("Could not save settings");} }
-function usefulOutcome(value){const text=value.trim();return text.length>=12&&text.split(/\\s+/).filter(Boolean).length>=3&&/[a-z]/i.test(text);}
-function updateRequestValidity(announceChange){const textarea=document.getElementById("changeMessage"),save=document.getElementById("saveRequest"),guidance=document.getElementById("requestGuidance");if(!textarea||!guidance)return;const valid=usefulOutcome(textarea.value);if(save){save.dataset.requestValid=String(valid);save.setAttribute("aria-describedby","requestGuidance");}guidance.classList.toggle("invalid",!valid);guidance.textContent=valid?(selectedReviewIssues.size?"The written outcome and selected groups will become Reviewer-approved work when saved.":"The written outcome will become Reviewer-approved work when saved."):"Write a reviewer-approved outcome in at least three words. Attaching a suggestion alone does not approve it.";if(announceChange&&requestWasValid===true&&!valid)announce(guidance.textContent);requestWasValid=valid;}
-function renderApplicableIssues(){const list=document.getElementById("issueSelection");if(!list)return;const affected=new Set(Array.from(document.querySelectorAll('input[name="affected"]:checked')).map(function(input){return input.value;}));const applicableIds=new Set(manifest.captures.filter(function(capture){return affected.has(capture.coordinate_id);}).flatMap(function(capture){return capture.issue_ids;}));selectedReviewIssues.forEach(function(id){if(!applicableIds.has(id))selectedReviewIssues.delete(id);});const applicable=manifest.issues.filter(function(issue){return applicableIds.has(issue.id);}).sort(function(left,right){const rank={high:0,"needs-confirmation":1,"likely-noise":2};return rank[confidenceFor(left)]-rank[confidenceFor(right)]||issueTitle(left).localeCompare(issueTitle(right));});list.replaceChildren();if(!applicable.length){list.appendChild(node("p",{class:"help",text:"No machine suggestions apply to the selected screenshots."}));updateRequestValidity(true);return;}applicable.forEach(function(issue){const input=node("input",{type:"checkbox",name:"selectedIssue",value:issue.id});input.checked=selectedReviewIssues.has(issue.id);input.addEventListener("change",function(){if(input.checked)selectedReviewIssues.add(issue.id);else selectedReviewIssues.delete(issue.id);persistDraft();updateRequestValidity(true);});list.appendChild(node("label",{class:"check"},[input,node("div",{},[node("span",{text:issueTitle(issue)}),node("div",{class:"help",text:confidenceLabel(issue)+" · "+affectedSizeLabel(issue)})]) ]));});updateRequestValidity(true);}
 function renderMobileFilters(){const body=document.getElementById("drawerBody");body.replaceChildren(filterControls());body.appendChild(node("button",{class:"clear",text:"Show All Screenshots",onclick:function(){clearFilters();closeDrawer();}}));}
 function openMobileFilters(trigger){openDrawer("Filter screenshots","filters",trigger);renderMobileFilters();document.getElementById("drawerActions").appendChild(node("button",{class:"primary",text:"Show Screenshots",onclick:closeDrawer}));}
 
@@ -435,7 +496,7 @@ document.getElementById("lightbox").addEventListener("close",function(){lightbox
 document.getElementById("retryStorage").addEventListener("click",function(){loadReview(true);});
 window.addEventListener("resize",function(){if(fit)applyZoom();const dialog=document.getElementById("lightbox");if(dialog.open&&lightboxAsset){if(lightboxFit)fitLightbox();else updateLightboxZoom();}});
 async function openOriginalAsset(event){event.preventDefault();const path=event.currentTarget.dataset.assetPath;if(!path)return;try{const url=await secureBlobUrl(path),link=document.createElement("a");link.href=url;link.target="_blank";link.rel="noopener noreferrer";link.click();setTimeout(function(){URL.revokeObjectURL(url);},30000);}catch{announce("Could not open original screenshot");}}
-async function loadReview(announceRecovery) { try { const responses=await Promise.all([authorizedFetch("api/review",{cache:"no-store"}),authorizedFetch("api/settings",{cache:"no-store"})]);if(!responses[0].ok||!responses[1].ok)throw new Error("Review storage unavailable");review=await responses[0].json();settings=await responses[1].json();clearStorageError(announceRecovery);render(); } catch(error) { render();showStorageError("Review storage unavailable. Feedback and exports cannot be saved."); } }
+async function loadReview(announceRecovery) { try { const responses=await Promise.all([authorizedFetch("api/review",{cache:"no-store"}),authorizedFetch("api/settings",{cache:"no-store"})]);if(!responses[0].ok||!responses[1].ok)throw new Error("Review storage unavailable");review=await responses[0].json();settings=await responses[1].json();clearStorageError(announceRecovery);render(); } catch(error) { render();showStorageError("Review storage unavailable. Decisions and exports cannot be saved."); } }
 document.getElementById("openOriginal").addEventListener("click",openOriginalAsset);
 loadReview(false);
 `;

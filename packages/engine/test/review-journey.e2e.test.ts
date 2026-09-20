@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chromium } from "playwright";
-import type { Browser } from "playwright";
+import type { Browser, Page } from "playwright";
 import { PRODUCT_VERSION, type Report, type ReviewManifest, type ReviewState } from "@vqa/contract";
 import { renderReportHtml } from "../src/index.js";
 import { captureBrowserLaunch } from "../../cli/test/helpers.js";
@@ -22,7 +22,7 @@ const report: Report = {
   formatVersion: "2",
   tool: "viewport-qa",
   toolVersion: PRODUCT_VERSION,
-  schemaVersions: { report: "2", manifest: 1, reviewState: 1 },
+  schemaVersions: { report: "2", manifest: 1, reviewState: 2 },
   url: "https://northstar.example/",
   createdAt: "2026-08-20T20:14:04.000Z",
   adapter: { impl: "stub", wired: false },
@@ -63,6 +63,31 @@ afterAll(async () => {
   if (reportDir) rmSync(reportDir, { recursive: true, force: true });
 });
 
+/** Puts one issue in the export through the API so Export is available without driving the panel. */
+async function seedExport(page: Page, issueId = "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED"): Promise<void> {
+  const launch = new URL(baseUrl);
+  const response = await page.request.post(new URL("api/review", launch.origin).href, {
+    headers: { ...requestHeaders, origin: launch.origin, "content-type": "application/json" },
+    data: { issueId, status: "export" },
+  });
+  expect(response.status()).toBe(200);
+}
+
+/** Opens one issue's panel from its row and expands the highlight editor. */
+async function openIssuePanel(page: Page, coordinateId: string, title: string, touch = false): Promise<void> {
+  const opener = page.locator(`[data-capture="${coordinateId}"] .issue-row`, { hasText: title }).locator(".issue-open");
+  if (touch) await opener.tap(); else await opener.click();
+  await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBe("");
+  await expect
+    .poll(() => page.locator("#drawer").evaluate((drawer) => drawer.classList.contains("opening")))
+    .toBe(false);
+  const details = page.locator("#drawerBody details.issue-highlight");
+  if (await details.count()) {
+    await details.evaluate((element: HTMLDetailsElement) => { element.open = true; });
+    await expect.poll(() => page.locator(".highlight-stage img").evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThan(0);
+  }
+}
+
 describe("manifest-backed screenshot review journey", () => {
   it("composes presentation filters, hides internal vocabulary, and keeps screenshots color-accurate at 100 percent", async () => {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -97,67 +122,33 @@ describe("manifest-backed screenshot review journey", () => {
     await page.close();
   });
 
-  it("retains an unsaved request after failure, retries it, and exports selected screenshots", async () => {
+  it("keeps a decision retryable after a storage failure, persists it, and exports the selected issues", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await page.goto(baseUrl);
     await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
 
-    const goodCard = page.locator('[data-capture="page-home--state-default--390x844"]');
-    await goodCard.getByRole("button", { name: "Looks Good" }).click();
-    await expect.poll(
-      () => goodCard.locator(".status").textContent(),
-      { timeout: REVIEW_WRITE_TIMEOUT },
-    ).toBe("Looks good");
+    // A quick action on a row decides without opening anything.
+    const homeCard = page.locator('[data-capture="page-home--state-alternate--390x844"]');
+    const homeRow = homeCard.locator(".issue-row", { hasText: "Primary action is hard to read" });
+    await homeRow.getByRole("button", { name: /^Dismiss: / }).click();
+    await expect.poll(() => homeRow.locator(".pill").textContent(), { timeout: REVIEW_WRITE_TIMEOUT }).toBe("Dismissed");
 
-    const badCard = page.locator(
-      '[data-capture="page-checkout--state-alternate--390x844"]',
-    );
-    const badTrigger = badCard.getByRole("button", { name: "Request Changes" });
-    await badTrigger.click();
+    // Opening a row shows that one issue: its close-up, finding, range, and actions.
+    const checkoutCard = page.locator('[data-capture="page-checkout--state-alternate--390x844"]');
+    const checkoutRow = checkoutCard.locator(".issue-row", { hasText: "Checkout total is clipped" });
+    await checkoutRow.locator(".issue-open").click();
     await expect
-      .poll(() =>
-        page.locator("#drawerTitle").evaluate((element) => element === document.activeElement),
-      )
+      .poll(() => page.locator("#drawerTitle").evaluate((element) => element === document.activeElement))
       .toBe(true);
-    await page.locator("#changeMessage").fill(
-      "Give the total enough width to show the full amount at this screen size.",
-    );
-    expect(
-      await page.getByRole("heading", { name: "Machine suggestions to promote", exact: true }).count(),
-    ).toBe(1);
-    expect(
-      await page.getByText(
-        "Checking a group attaches its evidence. It becomes reviewer-approved work only when you save it with the written outcome above.",
-        { exact: true },
-      ).count(),
-    ).toBe(1);
-    const checkoutIssue = page.getByRole("checkbox", { name: "Checkout total is clipped" });
-    expect(await checkoutIssue.isChecked()).toBe(false);
-    expect(await page.getByRole("checkbox", { name: "Primary action is hard to read" }).count()).toBe(0);
-    await page.getByText("Checkout total is clipped", { exact: true }).last().click();
-    expect(await checkoutIssue.isChecked()).toBe(true);
-    await page
-      .locator(
-        'input[name="affected"][value="page-home--state-alternate--390x844"]',
-      )
-      .check();
-    const homeIssue = page.getByRole("checkbox", { name: "Primary action is hard to read" });
-    expect(await homeIssue.isChecked()).toBe(false);
-    await homeIssue.focus();
-    await page.keyboard.press("Space");
-    expect(await homeIssue.isChecked()).toBe(true);
-    const homeAffected = page.locator(
-      'input[name="affected"][value="page-home--state-alternate--390x844"]',
-    );
-    await homeAffected.uncheck();
-    expect(await page.getByRole("checkbox", { name: "Primary action is hard to read" }).count()).toBe(0);
-    await homeAffected.check();
-    const restoredHomeIssue = page.getByRole("checkbox", {
-      name: "Primary action is hard to read",
-    });
-    expect(await restoredHomeIssue.isChecked()).toBe(false);
-    await restoredHomeIssue.check();
+    expect(await page.locator("#drawerTitle").textContent()).toBe("Checkout total is clipped");
+    expect(await page.locator("#drawerBody .issue-crop img").count()).toBe(1);
+    expect(await page.locator("#drawerBody .issue-finding").textContent()).toBe("The order total does not fit in its available space.");
+    expect(await page.locator("#drawerBody .issue-range").textContent()).toBe("At every size scanned (390 × 844, 1280 × 800).");
+    expect(await page.getByRole("heading", { name: "Machine suggestions to promote" }).count()).toBe(0);
+    const note = "Give the total enough width to show the full amount at this screen size.";
+    await page.locator("#issueNote").fill(note);
 
+    // A failed save keeps the note and offers a retry.
     await page.route("**/api/review", async (route) => {
       await route.fulfill({
         status: 500,
@@ -165,64 +156,41 @@ describe("manifest-backed screenshot review journey", () => {
         body: JSON.stringify({ error: "forced save failure" }),
       });
     });
-    await page.getByRole("button", { name: "Save Change Request" }).click();
-    await expect
-      .poll(() => page.locator("#saveError").textContent())
-      .toContain("Your text is still here");
-    await expect
-      .poll(() => page.locator("#changeMessage").inputValue())
-      .toBe("Give the total enough width to show the full amount at this screen size.");
+    await page.locator("#addToExport").click();
+    await expect.poll(() => page.locator("#saveError").textContent()).toContain("Could not save");
+    expect(await page.locator("#issueNote").inputValue()).toBe(note);
     await page.unroute("**/api/review");
     await page.locator("#saveError").getByRole("button", { name: "Retry Connection" }).click();
     await expect.poll(() => page.locator("#storageError").getAttribute("hidden")).toBe("");
-    await expect
-      .poll(() => page.getByRole("button", { name: "Save Change Request" }).isDisabled())
-      .toBe(false);
-    await page.getByRole("button", { name: "Save Change Request" }).click();
-    await expect.poll(
-      () => page.locator("#drawer").getAttribute("open"),
-      { timeout: REVIEW_WRITE_TIMEOUT },
-    ).toBeNull();
-    await expect.poll(
-      () => badCard.locator(".status").textContent(),
-      { timeout: REVIEW_WRITE_TIMEOUT },
-    ).toBe("Change requested");
+    await expect.poll(() => page.locator("#addToExport").isDisabled()).toBe(false);
+    await page.locator("#addToExport").click();
+    await expect.poll(() => page.locator("#addToExport").textContent(), { timeout: REVIEW_WRITE_TIMEOUT }).toBe("Remove from export");
+    expect(await page.locator("#drawerBody .pill").textContent()).toBe("In export");
+    expect(await page.locator("#issueNote").inputValue()).toBe(note);
+    await page.locator("#drawerActions").getByRole("button", { name: "Close", exact: true }).click();
+    await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
+    await expect.poll(() => checkoutRow.locator(".pill").textContent()).toBe("In export");
+    expect(await page.locator("#progress").textContent()).toBe("0 to review · 1 in export · 1 dismissed");
 
     await page.reload();
     await expect
-      .poll(() =>
-        page
-          .locator('[data-capture="page-checkout--state-alternate--390x844"] .status')
-          .textContent(),
-      )
-      .toBe("Change requested");
+      .poll(() => page.locator('[data-capture="page-checkout--state-alternate--390x844"] .issue-row .pill').first().textContent())
+      .toBe("In export");
     const persisted = (await (
       await page.request.get(new URL("api/review", baseUrl).href, { headers: requestHeaders })
     ).json()) as ReviewState;
-    expect(
-      persisted.captures["page-checkout--state-alternate--390x844"]!
-        .requested_change!.affected_coordinate_ids,
-    ).toEqual([
-      "page-checkout--state-alternate--390x844",
-      "page-home--state-alternate--390x844",
-    ]);
-    expect(
-      persisted.captures["page-checkout--state-alternate--390x844"]!
-        .requested_change!.selected_issue_ids,
-    ).toEqual([
-      "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED",
-      "VQ-ISSUE-HOME-LOW-CONTRAST-CTA",
-    ]);
-    await badCard.getByRole("button", { name: "Request Changes" }).click();
-    expect(await page.getByRole("checkbox", { name: "Checkout total is clipped" }).isChecked()).toBe(
-      true,
-    );
-    expect(
-      await page.getByRole("checkbox", { name: "Primary action is hard to read" }).isChecked(),
-    ).toBe(true);
-    await page.getByRole("button", { name: "Cancel" }).click();
+    expect(persisted.issues).toEqual({
+      "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED": { status: "export", note, updated_at: expect.any(String) },
+      "VQ-ISSUE-HOME-LOW-CONTRAST-CTA": { status: "dismissed", updated_at: expect.any(String) },
+    });
+    await checkoutRow.locator(".issue-open").click();
+    await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBe("");
+    expect(await page.locator("#issueNote").inputValue()).toBe(note);
+    expect(await page.locator("#addToExport").textContent()).toBe("Remove from export");
+    await page.locator("#drawerActions").getByRole("button", { name: "Close", exact: true }).click();
     await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
 
+    // Status filters apply to issues; screenshots without a matching issue drop out.
     await page.getByRole("button", { name: "Filter Screenshots" }).click();
     const screenCounts = page.locator("#drawer fieldset").filter({ hasText: "Screen size" }).locator(".count");
     const beforeCounts = await screenCounts.allTextContents();
@@ -230,10 +198,10 @@ describe("manifest-backed screenshot review journey", () => {
       .locator('#drawer input[data-facet="status"][value="unreviewed"]')
       .uncheck();
     expect(await screenCounts.allTextContents()).not.toEqual(beforeCounts);
-    await page.locator('#drawer input[data-facet="status"][value="good"]').uncheck();
+    await page.locator('#drawer input[data-facet="status"][value="dismissed"]').uncheck();
     await page.getByRole("button", { name: "Show Screenshots" }).click();
     await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
-    await expect.poll(() => page.locator("[data-capture]").count()).toBe(1);
+    await expect.poll(() => page.locator("[data-capture]").count()).toBe(2);
 
     const destination = join(reportDir, "browser-handoff.json");
     await page.getByRole("button", { name: "Open settings" }).click();
@@ -256,7 +224,8 @@ describe("manifest-backed screenshot review journey", () => {
     });
     const humanTextDestination = join(reportDir, "browser-handoff.txt");
     const humanPdfDestination = join(reportDir, "browser-handoff.pdf");
-    await page.getByRole("button", { name: /Export changes/ }).click();
+    await page.locator("#exportButton").click();
+    expect(await page.locator("#drawer .export-list .export-item").count()).toBe(1);
     expect(await page.getByRole("group", { name: "Who will use this handoff?" }).isVisible()).toBe(
       true,
     );
@@ -273,8 +242,11 @@ describe("manifest-backed screenshot review journey", () => {
     expect(existsSync(destination)).toBe(false);
     expect(existsSync(join(reportDir, "handoffs"))).toBe(false);
     const humanContent = await page.locator("#handoffOutput").inputValue();
-    expect(humanContent).toContain("VISUAL QA HANDOFF");
-    expect(humanContent).not.toMatch(/VQ-|audit|hash|policy|reason code|selector|schema|format|version/iu);
+    expect(humanContent).toContain("VIEWPORT QA HANDOFF");
+    expect(humanContent).toContain("1. Checkout total is clipped");
+    expect(humanContent).toContain(`Reviewer note: ${note}`);
+    expect(humanContent).not.toContain("Primary action is hard to read");
+    expect(humanContent).not.toMatch(/VQ-|audit|hash|policy|reason code|schema|format|version/iu);
     expect(humanContent).not.toMatch(/[#*_`]/u);
     expect(
       await page.locator("#handoffOutput").evaluate((output) => ({
@@ -317,9 +289,10 @@ describe("manifest-backed screenshot review journey", () => {
     ).toBe(1);
     const canonicalContent = await page.locator("#handoffOutput").inputValue();
     const generated = JSON.parse(canonicalContent) as {
-      requests: Array<{ affected_coordinates: unknown[] }>;
+      items: Array<{ issue_id: string; occurrences: unknown[] }>;
     };
-    expect(generated.requests[0]!.affected_coordinates).toHaveLength(2);
+    expect(generated.items.map((item) => item.issue_id)).toEqual(["VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED"]);
+    expect(generated.items[0]!.occurrences).toHaveLength(2);
     await page.getByRole("button", { name: "Copy AI Handoff" }).click();
     await expect.poll(() => page.locator("#handoffResultMessage").textContent()).toContain("copied");
     expect((await page.evaluate(() => navigator.clipboard.readText())).replaceAll("\r\n", "\n")).toBe(canonicalContent);
@@ -352,7 +325,7 @@ describe("manifest-backed screenshot review journey", () => {
       { timeout: REVIEW_WRITE_TIMEOUT },
     ).toContain(destination);
     expect(await page.locator("#saveError").count()).toBe(0);
-    expect(JSON.parse(readFileSync(destination, "utf8")).requests[0].affected_coordinates).toHaveLength(2);
+    expect(JSON.parse(readFileSync(destination, "utf8")).items[0].occurrences).toHaveLength(2);
     expect(readFileSync(destination, "utf8")).toBe(canonicalContent);
     await page.locator("#handoffPath").fill(join(reportDir, "wrong.txt"));
     await page.getByRole("button", { name: "Save AI JSON Handoff to File" }).click();
@@ -364,57 +337,42 @@ describe("manifest-backed screenshot review journey", () => {
     await page.close();
   }, 90_000);
 
-  it("supports touch selection plus zero and one attached issue persistence", async () => {
+  it("supports touch decisions from rows and the panel, and a screenshot with no issues says so", async () => {
     const context = await browser.newContext({
       viewport: { width: 390, height: 844 },
       hasTouch: true,
     });
     const page = await context.newPage();
+    const launch = new URL(baseUrl);
+    await page.request.post(new URL("api/review", launch.origin).href, {
+      headers: { ...requestHeaders, origin: launch.origin, "content-type": "application/json" },
+      data: { issueId: "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED", status: "export" },
+    });
     await page.goto(baseUrl);
+    await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
     const card = page.locator('[data-capture="page-checkout--state-alternate--390x844"]');
-    await card.getByRole("button", { name: "Request Changes" }).click();
-    const checkoutIssue = page.getByRole("checkbox", { name: "Checkout total is clipped" });
-    const homeIssue = page.getByRole("checkbox", { name: "Primary action is hard to read" });
-    expect(await checkoutIssue.isChecked()).toBe(true);
-    expect(await homeIssue.isChecked()).toBe(true);
-    await checkoutIssue.tap();
-    await homeIssue.tap();
-    expect(await checkoutIssue.isChecked()).toBe(false);
-    expect(await homeIssue.isChecked()).toBe(false);
-    await page.getByRole("button", { name: "Save Change Request" }).tap();
-    await expect.poll(
-      () => page.locator("#drawer").getAttribute("open"),
-      { timeout: REVIEW_WRITE_TIMEOUT },
-    ).toBeNull();
+    const row = card.locator(".issue-row", { hasText: "Checkout total is clipped" });
+    await expect.poll(() => row.locator(".pill").textContent()).toBe("In export");
+    await row.getByRole("button", { name: /^Remove from export: / }).tap();
+    await expect.poll(() => row.locator(".pill").textContent(), { timeout: REVIEW_WRITE_TIMEOUT }).toBe("To review");
+    await row.getByRole("button", { name: /^Dismiss: / }).tap();
+    await expect.poll(() => row.locator(".pill").textContent(), { timeout: REVIEW_WRITE_TIMEOUT }).toBe("Dismissed");
+    await row.getByRole("button", { name: /^Restore: / }).tap();
+    await expect.poll(() => row.locator(".pill").textContent(), { timeout: REVIEW_WRITE_TIMEOUT }).toBe("To review");
 
-    await card.getByRole("button", { name: "Request Changes" }).tap();
-    expect(await page.locator('input[name="selectedIssue"]:checked').count()).toBe(0);
-    await page.getByText("Checkout total is clipped", { exact: true }).last().tap();
-    expect(await page.getByRole("checkbox", { name: "Checkout total is clipped" }).isChecked()).toBe(
-      true,
-    );
-    expect(await page.getByRole("checkbox", { name: "Primary action is hard to read" }).isChecked()).toBe(
-      false,
-    );
-    await page.getByRole("button", { name: "Save Change Request" }).tap();
-    await expect.poll(
-      () => page.locator("#drawer").getAttribute("open"),
-      { timeout: REVIEW_WRITE_TIMEOUT },
-    ).toBeNull();
-    await card.getByRole("button", { name: "Request Changes" }).tap();
-    expect(await page.locator('input[name="selectedIssue"]:checked').count()).toBe(1);
-    await page.getByRole("button", { name: "Cancel" }).tap();
+    await row.locator(".issue-open").tap();
+    await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBe("");
+    await page.locator("#addToExport").tap();
+    await expect.poll(() => page.locator("#addToExport").textContent(), { timeout: REVIEW_WRITE_TIMEOUT }).toBe("Remove from export");
+    await page.locator("#drawerActions").getByRole("button", { name: "Close", exact: true }).tap();
     await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
+    expect(await row.locator(".pill").textContent()).toBe("In export");
 
     const noIssueCard = page.locator('[data-capture="page-home--state-default--390x844"]');
-    await noIssueCard.getByRole("button", { name: "Request Changes" }).tap();
-    expect(await page.locator('input[name="selectedIssue"]').count()).toBe(0);
-    expect(
-      await page.getByText("No machine suggestions apply to the selected screenshots.", { exact: true }).count(),
-    ).toBe(1);
-    await page.getByRole("button", { name: "Cancel" }).tap();
-    await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
-    await page.getByRole("button", { name: /Export changes/ }).tap();
+    expect(await noIssueCard.locator(".capture-summary").textContent()).toBe("No issues found");
+    expect(await noIssueCard.locator(".issue-row").count()).toBe(0);
+
+    await page.locator("#exportButton").tap();
     const humanAudience = page.getByRole("radio", { name: /Human/ });
     const aiAudience = page.getByRole("radio", { name: /^AI/ });
     await aiAudience.focus();
@@ -429,72 +387,37 @@ describe("manifest-backed screenshot review journey", () => {
     await context.close();
   }, 60_000);
 
-  it("requires reviewer-authored text even when a machine suggestion is attached", async () => {
+  it("saves an optional note with a decision and keeps it across reopen", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await page.goto(baseUrl);
     const issueCard = page.locator('[data-capture="page-home--state-alternate--390x844"]');
-    await issueCard.getByRole("button", { name: "View Concern" }).click();
-    expect(await page.getByLabel("What useful outcome should change?").count()).toBe(1);
-    await page.locator("#changeMessage").fill("");
-    const issue = page.getByRole("checkbox", { name: "Primary action is hard to read" });
-    if (await issue.isChecked()) await issue.uncheck();
-    expect(await page.locator("#saveRequest").getAttribute("data-request-valid")).toBe("false");
-    await page.locator("#saveRequest").click();
-    await expect
-      .poll(() => page.locator("#requestGuidance").evaluate((element) => element === document.activeElement))
-      .toBe(true);
-    expect(await page.locator("#requestGuidance").textContent()).toBe(
-      "Write a useful reviewer-approved outcome in at least three words before saving.",
-    );
-    expect(await page.locator("#liveRegion").textContent()).toContain(
-      "reviewer-approved outcome",
-    );
-
-    await issue.check();
-    expect(await page.locator("#saveRequest").getAttribute("data-request-valid")).toBe("false");
-    await page.locator("#saveRequest").click();
-    await page.locator("#changeMessage").fill("Make the primary action easier to read.");
-    await page.locator("#saveRequest").click();
-    await expect.poll(
-      () => issueCard.locator(".status").textContent(),
-      { timeout: REVIEW_WRITE_TIMEOUT },
-    ).toBe("Change requested");
-    await issueCard.getByRole("button", { name: "View Concern" }).click();
-    expect(await page.locator("#changeMessage").inputValue()).toBe(
-      "Make the primary action easier to read.",
-    );
-    await page.getByRole("checkbox", { name: "Primary action is hard to read" }).uncheck();
-    expect(await page.locator("#saveRequest").getAttribute("data-request-valid")).toBe("true");
-    await page.locator("#saveRequest").click();
-    await expect.poll(
-      () => page.locator("#drawer").getAttribute("open"),
-      { timeout: REVIEW_WRITE_TIMEOUT },
-    ).toBeNull();
-    await issueCard.getByRole("button", { name: "View Concern" }).click();
-    expect(await page.locator('input[name="selectedIssue"]:checked').count()).toBe(0);
-    expect(await page.locator("#changeMessage").inputValue()).toBe(
-      "Make the primary action easier to read.",
-    );
-    await page.getByRole("button", { name: "Cancel" }).click();
-
-    const noIssueCard = page.locator('[data-capture="page-home--state-default--390x844"]');
-    await noIssueCard.getByRole("button", { name: "Request Changes" }).click();
-    await page
-      .locator('input[name="affected"][value="page-home--state-alternate--390x844"]')
-      .check();
-    const applicable = page.getByRole("checkbox", { name: "Primary action is hard to read" });
-    await applicable.check();
-    expect(await page.locator("#saveRequest").getAttribute("data-request-valid")).toBe("false");
-    await page
-      .locator('input[name="affected"][value="page-home--state-alternate--390x844"]')
-      .uncheck();
-    expect(await page.getByRole("checkbox", { name: "Primary action is hard to read" }).count()).toBe(0);
-    expect(await page.locator("#saveRequest").getAttribute("data-request-valid")).toBe("false");
-    expect(await page.getByText("No machine suggestions apply to the selected screenshots.", { exact: true }).count()).toBe(1);
-    await page.locator("#saveRequest").click();
-    await expect
-      .poll(() => page.locator("#requestGuidance").evaluate((element) => element === document.activeElement))
-      .toBe(true);
+    const row = issueCard.locator(".issue-row", { hasText: "Primary action is hard to read" });
+    await row.locator(".issue-open").click();
+    await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBe("");
+    expect(await page.getByLabel("Note for the handoff (optional)").count()).toBe(1);
+    // No note is needed to decide.
+    await page.locator("#addToExport").click();
+    await expect.poll(() => page.locator("#addToExport").textContent(), { timeout: REVIEW_WRITE_TIMEOUT }).toBe("Remove from export");
+    expect(await page.locator("#saveNote").isHidden()).toBe(true);
+    // Editing the note on a decided issue reveals Save note; saving keeps the decision.
+    await page.locator("#issueNote").fill("Make the primary action easier to read.");
+    await expect.poll(() => page.locator("#saveNote").isHidden()).toBe(false);
+    await page.locator("#saveNote").click();
+    await expect.poll(() => page.locator("#saveNote").isHidden(), { timeout: REVIEW_WRITE_TIMEOUT }).toBe(true);
+    expect(await page.locator("#addToExport").textContent()).toBe("Remove from export");
+    await page.locator("#drawerActions").getByRole("button", { name: "Close", exact: true }).click();
+    await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
+    await row.locator(".issue-open").click();
+    await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBe("");
+    expect(await page.locator("#issueNote").inputValue()).toBe("Make the primary action easier to read.");
+    // Clearing the decision keeps nothing behind.
+    await page.locator("#addToExport").click();
+    await expect.poll(() => page.locator("#addToExport").textContent(), { timeout: REVIEW_WRITE_TIMEOUT }).toBe("Add to export");
+    const persisted = (await (
+      await page.request.get(new URL("api/review", baseUrl).href, { headers: requestHeaders })
+    ).json()) as ReviewState;
+    expect(persisted.issues["VQ-ISSUE-HOME-LOW-CONTRAST-CTA"]).toBeUndefined();
+    await page.locator("#drawerActions").getByRole("button", { name: "Close", exact: true }).click();
     await page.close();
   }, 60_000);
 
@@ -505,8 +428,10 @@ describe("manifest-backed screenshot review journey", () => {
       { width: 320, height: 700 },
     ]) {
       const page = await browser.newPage({ viewport });
+      await seedExport(page);
       await page.goto(baseUrl);
-      await page.getByRole("button", { name: /Export changes/ }).click();
+      await expect.poll(() => page.locator("#exportButton").isDisabled()).toBe(false);
+      await page.locator("#exportButton").click();
       await page.getByRole("button", { name: "Prepare Human Handoff to Copy and Paste" }).click();
       await expect.poll(
         () => page.locator("#handoffOutput").count(),
@@ -535,8 +460,10 @@ describe("manifest-backed screenshot review journey", () => {
 
   it("keeps a delayed handoff attempt in one mode and discards its response after close", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await seedExport(page);
     await page.goto(baseUrl);
-    await page.getByRole("button", { name: /Export changes/ }).click();
+    await expect.poll(() => page.locator("#exportButton").isDisabled()).toBe(false);
+    await page.locator("#exportButton").click();
 
     let releaseFirst!: () => void;
     let markFirstStarted!: () => void;
@@ -575,7 +502,7 @@ describe("manifest-backed screenshot review journey", () => {
 
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
-    await page.getByRole("button", { name: /Export changes/ }).click();
+    await page.locator("#exportButton").click();
     let releaseSecond!: () => void;
     let markSecondStarted!: () => void;
     let markSecondDelivered!: () => void;
@@ -612,7 +539,7 @@ describe("manifest-backed screenshot review journey", () => {
     await page.goto(baseUrl);
     const trigger = page
       .locator('[data-capture="page-home--state-alternate--390x844"]')
-      .getByRole("button", { name: "View Concern" });
+      .locator(".issue-row .issue-open").first();
     await trigger.focus();
     await page.keyboard.press("Enter");
     await expect
@@ -683,13 +610,13 @@ describe("manifest-backed screenshot review journey", () => {
     await page.keyboard.press("Escape");
     await expect.poll(() => opener.evaluate((element) => element === document.activeElement)).toBe(true);
 
-    await card.getByRole("button", { name: "View Concern" }).click();
+    await card.locator(".issue-row", { hasText: "Checkout total is clipped" }).locator(".issue-open").click();
     const crop = page.getByRole("button", {
-      name: "Open issue close-up for Checkout total is clipped",
+      name: "Open close-up of Checkout total is clipped",
     });
     await crop.tap();
     expect(await page.locator("#lightboxImage").getAttribute("alt")).toBe(
-      "Issue close-up for Checkout total is clipped",
+      "Close-up of Checkout total is clipped at 390 × 844",
     );
     await expect
       .poll(() =>
@@ -714,32 +641,22 @@ describe("manifest-backed screenshot review journey", () => {
     );
     const noIssueCard = page.locator('[data-capture="page-checkout--state-default--390x844"]');
     expect(await issueCard.getByRole("button", { name: "Open Image", exact: true }).count()).toBe(1);
-    expect(await issueCard.getByRole("button", { name: "View Concern", exact: true }).count()).toBe(1);
-    expect(await issueCard.getByRole("button", { name: "Ignore Concern", exact: true }).count()).toBe(1);
-    expect(await issueCard.getByRole("button", { name: "Request Changes", exact: true }).count()).toBe(1);
-    expect(await issueCard.getByRole("button", { name: "Looks Good", exact: true }).count()).toBe(0);
+    expect(await issueCard.locator(".issue-row").count()).toBe(1);
+    expect(await issueCard.getByRole("button", { name: /^(Add to export|Remove from export): / }).count()).toBe(1);
+    expect(await issueCard.getByRole("button", { name: /^(Dismiss|Restore): / }).count()).toBe(1);
     expect(await noIssueCard.getByRole("button", { name: "Open Image", exact: true }).count()).toBe(1);
-    expect(await noIssueCard.getByRole("button", { name: "Looks Good", exact: true }).count()).toBe(1);
-    expect(await noIssueCard.getByRole("button", { name: "Request Changes", exact: true }).count()).toBe(1);
-    expect(await noIssueCard.getByRole("button", { name: "View Concern", exact: true }).count()).toBe(0);
-    expect(await noIssueCard.getByRole("button", { name: "Ignore Concern", exact: true }).count()).toBe(0);
-
-    await issueCard.getByRole("button", { name: "Ignore Concern" }).tap();
-    await expect.poll(
-      () => issueCard.locator(".status").textContent(),
-      { timeout: REVIEW_WRITE_TIMEOUT },
-    ).toBe("Looks good");
+    expect(await noIssueCard.locator(".issue-row").count()).toBe(0);
+    expect(await noIssueCard.locator(".capture-summary").textContent()).toBe("No issues found");
     const marker = issueCard.locator(".issue-marker");
     expect(await marker.getAttribute("style")).toContain("left:20px;top:532px;width:350px;height:70px");
-    await issueCard.getByRole("button", { name: "View Concern" }).tap();
+    expect(await marker.getAttribute("data-number")).toBe("1");
     const issueId = "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED";
     const coordinateId = "page-checkout--state-alternate--390x844";
+    await openIssuePanel(page, coordinateId, "Checkout total is clipped", true);
     const savedRect = () =>
       page.evaluate(
         async ({ coordinateId, issueId }) =>
-          (await (await window.vqaAuthorizedFetch("api/review")).json()).captures[coordinateId].issue_highlights?.[
-            issueId
-          ],
+          (await (await window.vqaAuthorizedFetch("api/review")).json()).highlights[coordinateId]?.[issueId],
         { coordinateId, issueId },
       );
     const nextHighlightSave = async (expectedRect?: { x: number; y: number; width: number; height: number } | null) => {
@@ -825,11 +742,10 @@ describe("manifest-backed screenshot review journey", () => {
     expect(await scrollPosition()).toEqual(stableScroll);
     await page.unroute("**/api/review");
 
-    await page.getByRole("button", { name: "Cancel" }).tap();
+    await page.locator("#drawerActions").getByRole("button", { name: "Close", exact: true }).tap();
     await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
     await page.reload();
-    await page.locator('[data-capture="page-checkout--state-alternate--390x844"]')
-      .getByRole("button", { name: "View Concern" }).tap();
+    await openIssuePanel(page, "page-checkout--state-alternate--390x844", "Checkout total is clipped", true);
     await expect.poll(() => page.locator(".drawer-image img").getAttribute("src")).toMatch(/^blob:/u);
     expect(await page.locator(".highlight-editor").getAttribute("style")).toContain(
       "left:20px;top:532px;width:346px;height:78px",
@@ -892,11 +808,10 @@ describe("manifest-backed screenshot review journey", () => {
     await expect.poll(savedRect, { timeout: REVIEW_WRITE_TIMEOUT }).toEqual(restoredRect);
     await expect.poll(() => page.locator(".highlight-editor").count()).toBe(1);
     await expect.poll(() => highlightControl!.getAttribute("aria-label")).toBe("Remove highlight for Checkout total is clipped");
-    await page.getByRole("button", { name: "Cancel" }).tap();
+    await page.locator("#drawerActions").getByRole("button", { name: "Close", exact: true }).tap();
     await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
     await page.reload();
-    await page.locator('[data-capture="page-checkout--state-alternate--390x844"]')
-      .getByRole("button", { name: "View Concern" }).tap();
+    await openIssuePanel(page, "page-checkout--state-alternate--390x844", "Checkout total is clipped", true);
     expect(await page.locator(".highlight-editor").getAttribute("style")).toContain(
       "left:20px;top:532px;width:350px;height:70px",
     );
@@ -988,11 +903,10 @@ describe("manifest-backed screenshot review journey", () => {
       clientY: moverBox!.y + 1035,
     });
     await expect.poll(savedRect, { timeout: REVIEW_WRITE_TIMEOUT }).toEqual({ x: 40, y: 774, width: 350, height: 70 });
-    await page.getByRole("button", { name: "Cancel" }).tap();
+    await page.locator("#drawerActions").getByRole("button", { name: "Close", exact: true }).tap();
     await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
     await page.reload();
-    await page.locator('[data-capture="page-checkout--state-alternate--390x844"]')
-      .getByRole("button", { name: "View Concern" }).tap();
+    await openIssuePanel(page, "page-checkout--state-alternate--390x844", "Checkout total is clipped", true);
     expect(await page.locator(".highlight-editor").getAttribute("style")).toContain(
       "left:40px;top:774px;width:350px;height:70px",
     );
@@ -1051,20 +965,12 @@ describe("manifest-backed screenshot review journey", () => {
         { coordinateId, issueId, initial },
       );
       await page.reload();
-      await page
-        .locator(`[data-capture="${coordinateId}"]`)
-        .getByRole("button", { name: "View Concern" })
-        .tap();
-      await expect
-        .poll(() => page.locator("#drawer").evaluate((drawer) => drawer.classList.contains("opening")))
-        .toBe(false);
+      await openIssuePanel(page, coordinateId, "Checkout total is clipped", true);
 
       const savedRect = () =>
         page.evaluate(
           async ({ coordinateId, issueId }) =>
-            (await (await window.vqaAuthorizedFetch("api/review")).json()).captures[coordinateId].issue_highlights?.[
-              issueId
-            ],
+            (await (await window.vqaAuthorizedFetch("api/review")).json()).highlights[coordinateId]?.[issueId],
           { coordinateId, issueId },
         );
       const mover = page.getByRole("button", {
@@ -1178,39 +1084,38 @@ describe("manifest-backed screenshot review journey", () => {
       expect(await savedRect()).toEqual(moved);
       expect(await scrollPosition()).toEqual(beforeCancel);
 
-      await page.getByRole("button", { name: "Cancel" }).tap();
+      await page.locator("#drawerActions").getByRole("button", { name: "Close", exact: true }).tap();
       await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBeNull();
       await page.reload();
-      await page
-        .locator(`[data-capture="${coordinateId}"]`)
-        .getByRole("button", { name: "View Concern" })
-        .tap();
+      await openIssuePanel(page, coordinateId, "Checkout total is clipped", true);
       await expect.poll(() => page.locator(".highlight-editor").getAttribute("style")).toContain(
         "left:40px;top:548px;width:350px;height:70px",
       );
 
-      const exported = await page.evaluate(async () => {
+      const exported = await page.evaluate(async (issueId) => {
+        await window.vqaAuthorizedFetch("api/review", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ issueId, status: "export" }),
+        });
         const response = await window.vqaAuthorizedFetch("api/export", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ mode: "generate", audience: "ai" }),
         });
         return JSON.parse((await response.json()).content);
-      });
-      const exportedIssue = exported.requests
-        .flatMap((request: { affected_coordinates: Array<{ issues: unknown[] }> }) =>
-          request.affected_coordinates,
-        )
-        .find((coordinate: { coordinate_id: string }) => coordinate.coordinate_id === coordinateId)
-        .issues.find((issue: { id: string }) => issue.id === issueId);
-      expect(exportedIssue.highlight_rect).toEqual(moved);
-      await page.evaluate(async (coordinateId) => {
+      }, issueId);
+      const exportedOccurrence = exported.items
+        .find((item: { issue_id: string }) => item.issue_id === issueId)
+        .occurrences.find((occurrence: { coordinate_id: string }) => occurrence.coordinate_id === coordinateId);
+      expect(exportedOccurrence.highlight_rect).toEqual(moved);
+      await page.evaluate(async (issueId) => {
         await window.vqaAuthorizedFetch("api/review", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ coordinateId, classification: "good" }),
+          body: JSON.stringify({ issueId, status: null }),
         });
-      }, coordinateId);
+      }, issueId);
       await context.close();
     }
   }, 120_000);
@@ -1238,7 +1143,7 @@ describe("manifest-backed screenshot review journey", () => {
     expect(await page.getByRole("heading", { name: "Review run" }).isVisible()).toBe(true);
     expect(await page.getByRole("heading", { name: "Files and storage" }).isVisible()).toBe(true);
     expect(await page.getByText("review-state.json in this report directory", { exact: true }).isVisible()).toBe(true);
-    expect(await page.getByText(/Review feedback and exports stay on this machine/u).isVisible()).toBe(true);
+    expect(await page.getByText(/Decisions and exports stay on this machine/u).isVisible()).toBe(true);
     const technical = page.locator("details.settings-technical");
     expect(await technical.getAttribute("open")).toBeNull();
     expect(await page.getByText("Technical details", { exact: true }).isVisible()).toBe(true);
@@ -1371,15 +1276,16 @@ describe("manifest-backed screenshot review journey", () => {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     await page.goto(baseUrl);
     await expect.poll(() => page.locator("[data-capture]").count()).toBe(8);
-    const card = page.locator('[data-capture="page-checkout--state-default--390x844"]');
-    const reviewTrigger = card.getByRole("button", { name: "Request Changes" });
-    const coordinateId = "page-checkout--state-default--390x844";
+    const card = page.locator('[data-capture="page-checkout--state-alternate--390x844"]');
+    const reviewTrigger = card.locator(".issue-row", { hasText: "Checkout total is clipped" }).locator(".issue-open");
+    const issueId = "VQ-ISSUE-CHECKOUT-TOTAL-CLIPPED";
     const before = await page.evaluate(
-      async (id) => (await (await window.vqaAuthorizedFetch("api/review")).json()).captures[id],
-      coordinateId,
+      async (id) => (await (await window.vqaAuthorizedFetch("api/review")).json()).issues[id],
+      issueId,
     );
     await reviewTrigger.click();
-    await page.locator("#changeMessage").fill("This must remain unsaved.");
+    await expect.poll(() => page.locator("#drawer").getAttribute("open")).toBe("");
+    await page.locator("#issueNote").fill("This must remain unsaved.");
     await page.locator(".drawer-head").click({ position: { x: 8, y: 8 } });
     await page.locator("#drawerBody").click({ position: { x: 8, y: 8 } });
     await page.locator("#drawerActions").click({ position: { x: 8, y: 8 } });
@@ -1389,8 +1295,8 @@ describe("manifest-backed screenshot review journey", () => {
     await expect.poll(() => reviewTrigger.evaluate((element) => element === document.activeElement)).toBe(true);
     expect(
       await page.evaluate(
-        async (id) => (await (await window.vqaAuthorizedFetch("api/review")).json()).captures[id],
-        coordinateId,
+        async (id) => (await (await window.vqaAuthorizedFetch("api/review")).json()).issues[id],
+        issueId,
       ),
     ).toEqual(before);
 
@@ -1413,7 +1319,7 @@ describe("manifest-backed screenshot review journey", () => {
     await expect.poll(() => page.locator("#lightbox").getAttribute("open")).toBeNull();
     await expect.poll(() => imageOpener.evaluate((element) => element === document.activeElement)).toBe(true);
 
-    await reviewTrigger.click();
+    await openIssuePanel(page, "page-checkout--state-alternate--390x844", "Checkout total is clipped");
     const nestedOpener = page.locator("#drawerBody .drawer-image .image-open").first();
     await nestedOpener.click();
     await expect.poll(() => page.locator("#lightbox").getAttribute("open")).toBe("");
@@ -1688,6 +1594,7 @@ describe("manifest-backed screenshot review journey", () => {
 
   it("shows a persistent storage outage and fails closed until retry succeeds", async () => {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await seedExport(page);
     await page.route("**/api/review", async (route) => {
       await route.fulfill({
         status: 500,
@@ -1698,20 +1605,21 @@ describe("manifest-backed screenshot review journey", () => {
     await page.goto(baseUrl);
     await expect.poll(() => page.locator("#storageError").isVisible()).toBe(true);
     expect(await page.locator("#storageErrorText").textContent()).toContain(
-      "Feedback and exports cannot be saved",
+      "Decisions and exports cannot be saved",
     );
     expect(await page.locator("#liveRegion").textContent()).toContain(
       "Review storage unavailable",
     );
-    expect(await page.getByRole("button", { name: "Looks Good" }).first().isDisabled()).toBe(true);
-    expect(await page.getByRole("button", { name: "Request Changes" }).first().isDisabled()).toBe(true);
-    expect(await page.getByRole("button", { name: /Export changes/ }).isDisabled()).toBe(true);
+    expect(await page.getByRole("button", { name: /^Add to export: / }).first().isDisabled()).toBe(true);
+    expect(await page.getByRole("button", { name: /^Dismiss: / }).first().isDisabled()).toBe(true);
+    expect(await page.locator("#exportButton").isDisabled()).toBe(true);
     await page.unroute("**/api/review");
     await page.getByRole("button", { name: "Retry Connection" }).click();
     await expect.poll(() => page.locator("#storageError").getAttribute("hidden")).toBe("");
-    expect(await page.getByRole("button", { name: "Looks Good" }).first().isDisabled()).toBe(false);
-    expect(await page.getByRole("button", { name: "Request Changes" }).first().isDisabled()).toBe(false);
-    expect(await page.getByRole("button", { name: /Export changes/ }).isDisabled()).toBe(false);
+    expect(await page.getByRole("button", { name: /^Add to export: / }).first().isDisabled()).toBe(false);
+    expect(await page.getByRole("button", { name: /^Dismiss: / }).first().isDisabled()).toBe(false);
+    // Export needs something in the export list, not only working storage.
+    await expect.poll(() => page.locator("#exportButton").isDisabled()).toBe(false);
     await page.close();
   });
 });

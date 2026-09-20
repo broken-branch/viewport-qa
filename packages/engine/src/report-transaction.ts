@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { PNG } from "pngjs";
-import { PROTOCOL_IDENTITY, REPORT_FORMAT_VERSION, type Report, type ReviewManifest, type ReviewState } from "@vqa/contract";
+import { PROTOCOL_IDENTITY, REPORT_FORMAT_VERSION, REVIEW_STATE_SCHEMA_VERSION, type Report, type ReviewManifest, type ReviewState } from "@vqa/contract";
 import { acquireReportWriterLock } from "./report-lock.js";
 import { isLinkFreeExistingPath } from "./path-safety.js";
 
@@ -156,11 +156,16 @@ export async function validateCompletedReport(root: string): Promise<void> {
   }
   const state = JSON.parse(await readFile(join(root, "review-state.json"), "utf8")) as ReviewState;
   const manifestDigest = sha256(manifestBytes);
-  if (state.artifact_type !== "vq-review-state" || state.schema_version !== 1 || state.manifest_id !== manifest.manifest_id || state.manifest_sha256 !== manifestDigest) {
+  if (state.artifact_type !== "vq-review-state" || state.schema_version !== REVIEW_STATE_SCHEMA_VERSION || state.manifest_id !== manifest.manifest_id || state.manifest_sha256 !== manifestDigest) {
     throw new Error("review state is not bound to the manifest");
   }
-  if (Object.keys(state.captures).length !== manifest.captures.length || manifest.captures.some((capture) => !state.captures[capture.coordinate_id])) {
-    throw new Error("review state capture inventory mismatch");
+  const knownIssues = new Set(manifest.issues.map((issue) => issue.id));
+  const knownCaptures = new Set(manifest.captures.map((capture) => capture.coordinate_id));
+  if (
+    !state.issues || typeof state.issues !== "object" || Object.keys(state.issues).some((id) => !knownIssues.has(id)) ||
+    !state.highlights || typeof state.highlights !== "object" || Object.keys(state.highlights).some((id) => !knownCaptures.has(id))
+  ) {
+    throw new Error("review state references issues or captures outside the manifest");
   }
   const html = await readFile(join(root, "report.html"), "utf8");
   if (!html.includes('id="vqa-manifest"') || html.includes("Approve fix")) throw new Error("report.html is not the approved manifest-backed GUI");

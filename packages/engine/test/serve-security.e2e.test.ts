@@ -21,7 +21,7 @@ function makeReport(): string {
     formatVersion: "2",
     tool: "viewport-qa",
     toolVersion: PRODUCT_VERSION,
-    schemaVersions: { report: "2", manifest: 1, reviewState: 1 },
+    schemaVersions: { report: "2", manifest: 1, reviewState: 2 },
     url: "http://127.0.0.1/fixture",
     createdAt: "2026-08-23T00:00:00.000Z",
     adapter: { impl: "stub", wired: false },
@@ -94,7 +94,7 @@ describe("secure loopback launch session", () => {
     const { server, url } = await serveReport({ reportDir: root, port: 0 });
     const parts = launchParts(url);
     const endpoint = `${parts.origin}/api/review`;
-    const body = JSON.stringify({ coordinateId: "page-home--state-default--390x844", classification: "good" });
+    const body = JSON.stringify({ issueId: "VQ-ISSUE-HOME-LOW-CONTRAST-CTA", status: "export" });
     try {
       const probes = [
         await fetch(endpoint, { method: "POST", headers: { origin: "https://attacker.example", "content-type": "application/json", authorization: `VQA ${parts.capability}` }, body }),

@@ -103,9 +103,11 @@ describe("paint visibility", () => {
       await reviewPage.goto(pathToFileURL(join(outDir, "report.html")).href);
       await expect.poll(() => reviewPage.locator("[data-capture]").count()).toBe(3);
       await reviewPage.locator("[data-capture]").first()
-        .getByRole("button", { name: "View Concern" }).click();
-      expect(await reviewPage.getByText("fails at 390px and above", { exact: true }).count())
-        .toBeGreaterThan(0);
+        .locator(".issue-row .issue-open").first().click();
+      await expect.poll(() => reviewPage.locator("#drawer[open]").count()).toBe(1);
+      // One concern on every scanned size reads as such, not as three findings.
+      expect(await reviewPage.locator("#drawerBody .issue-range").innerText())
+        .toMatch(/^At every size scanned \(390x844, 768x1024, 1440x900\)\.$/u);
 
       const colorConcern = manifest.issues.find(
         (issue) => issue.type === "color" && issue.element_fingerprint === "id:seed-color",
@@ -135,18 +137,17 @@ describe("paint visibility", () => {
         },
       ];
       colorConcern.group_ids = ["group-color-mobile", "group-color-wide"];
+      // The review shows the detector's exact finding for the capture being
+      // looked at, so a concern with different evidence per size stays honest.
       const groupedReviewPage = await browser.newPage();
       await groupedReviewPage.setContent(renderReportHtml(stored, manifest));
-      await groupedReviewPage.locator("[data-capture]").first()
-        .getByRole("button", { name: "View Concern" }).click();
-      const evidenceGroups = groupedReviewPage.locator(
-        '[data-presentation-group^="group-color-"]',
-      );
-      await expect.poll(() => evidenceGroups.count()).toBe(2);
-      await expect.poll(() => evidenceGroups.allTextContents()).toEqual([
-        expect.stringContaining("Mobile color evidence."),
-        expect.stringContaining("Wide color evidence."),
-      ]);
+      const colorRow = groupedReviewPage.locator("[data-capture]").first()
+        .locator('[data-issue-row="' + colorConcern.id + '"] .issue-open');
+      await colorRow.click();
+      await expect.poll(() => groupedReviewPage.locator("#drawer[open]").count()).toBe(1);
+      const firstCapture = manifest.captures[0]!;
+      const occurrence = colorConcern.occurrences!.find((item) => item.capture_coordinate_id === firstCapture.coordinate_id)!;
+      expect(await groupedReviewPage.locator("#drawerBody .issue-finding").innerText()).toBe(occurrence.message);
     } finally {
       await browser.close();
     }

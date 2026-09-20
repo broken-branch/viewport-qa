@@ -56,13 +56,13 @@ describe("public documentation", () => {
     const handoff = JSON.parse(readFileSync(join(REPO_ROOT, "docs/examples/minimal-ai-handoff.json"), "utf8")) as PortableReviewBundle;
     expect(() => validateReviewManifest(manifest)).not.toThrow();
     expect(manifest.source_report.tool_version).toBe(PRODUCT_VERSION);
-    expect(state).toMatchObject({ artifact_type: "vq-review-state", schema_version: 1, manifest_id: manifest.manifest_id });
+    expect(state).toMatchObject({ artifact_type: "vq-review-state", schema_version: 2, manifest_id: manifest.manifest_id, issues: {}, highlights: {} });
     expect(state.manifest_sha256).toBe(createHash("sha256").update(manifestBytes).digest("hex"));
     expect(handoff).toMatchObject({
       artifact_type: "viewport-qa-change-request-bundle",
-      schema_version: 1,
+      schema_version: 2,
       export_policy_id: "vq-export-identity-v1",
-      requests: [],
+      items: [],
     });
     expect(handoff.source_report.tool_version).toBe(PRODUCT_VERSION);
   });

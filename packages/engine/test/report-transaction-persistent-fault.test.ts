@@ -56,7 +56,7 @@ function writeValidReport(root: string, marker: string): void {
       source_sha: marker,
       report_schema_version: "3",
       manifest_schema_version: 1,
-      review_state_schema_version: 1,
+      review_state_schema_version: 2,
     },
     pages: [],
     states: [],
@@ -72,10 +72,11 @@ function writeValidReport(root: string, marker: string): void {
   const manifestBytes = `${JSON.stringify(manifest, null, 2)}\n`;
   const state = {
     artifact_type: "vq-review-state",
-    schema_version: 1,
+    schema_version: 2,
     manifest_id: manifest.manifest_id,
     manifest_sha256: createHash("sha256").update(manifestBytes).digest("hex"),
-    captures: {},
+    issues: {},
+    highlights: {},
   };
   writeFileSync(join(root, "issues.json"), `${JSON.stringify(report, null, 2)}\n`);
   writeFileSync(join(root, "review-manifest.json"), manifestBytes);

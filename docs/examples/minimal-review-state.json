@@ -1,7 +1,8 @@
 {
   "artifact_type": "vq-review-state",
-  "schema_version": 1,
+  "schema_version": 2,
   "manifest_id": "manifest-example-empty",
-  "manifest_sha256": "7a3e6089cb87cdacf05e71d701be94b6168a1b53bebc11f9d187b2555384c5a1",
-  "captures": {}
+  "manifest_sha256": "3372647c2c4a4a6e4539fdcb4769de8de52b7f79f58d8388cb371f1b8ffeac3c",
+  "issues": {},
+  "highlights": {}
 }

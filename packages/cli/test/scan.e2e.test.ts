@@ -65,7 +65,7 @@ describe("vqa scan (seeded-defects fixture, real binary)", () => {
     expect(report.formatVersion).toBe("3");
     expect(report.viewports).toHaveLength(2);
     expect(existsSync(join(outDir, "report.html"))).toBe(true);
-    expect(report.schemaVersions).toEqual({ report: "3", manifest: 1, reviewState: 1 });
+    expect(report.schemaVersions).toEqual({ report: "3", manifest: 1, reviewState: 2 });
     for (const viewport of report.viewports) {
       expect(existsSync(join(outDir, viewport.screenshot))).toBe(true);
     }
@@ -147,7 +147,7 @@ describe("vqa scan (seeded-defects fixture, real binary)", () => {
     expect(manifest.issues.every((issue) => /^concern-[0-9a-f]{20}$/u.test(issue.id))).toBe(true);
     const html = readFileSync(join(outDir, "report.html"), "utf8");
     expect(html).toContain('id="vqa-manifest"');
-    expect(html).toContain("Not reviewed");
+    expect(html).toContain("To review");
     expect(html).not.toContain("Approve fix");
     expect(html).not.toContain("Audit FAIL");
   });
@@ -156,9 +156,9 @@ describe("vqa scan (seeded-defects fixture, real binary)", () => {
     const manifestBytes = readFileSync(join(outDir, "review-manifest.json"));
     expect(reviewState.manifest_id).toBe(manifest.manifest_id);
     expect(reviewState.manifest_sha256).toBe(createHash("sha256").update(manifestBytes).digest("hex"));
-    expect(Object.keys(reviewState.captures).sort()).toEqual(
-      manifest.captures.map((capture) => capture.coordinate_id).sort(),
-    );
+    expect(reviewState.schema_version).toBe(2);
+    expect(reviewState.issues).toEqual({});
+    expect(reviewState.highlights).toEqual({});
     for (const asset of manifest.assets) {
       const bytes = readFileSync(join(outDir, asset.source_relative_path));
       expect(bytes.byteLength).toBe(asset.byte_length);
