@@ -219,8 +219,11 @@ function captureCard(capture, grouped) {
 function applyZoom() {
   document.querySelectorAll(".capture").forEach(function(card) {
     const canvas = card.querySelector(".canvas"), stage = card.querySelector(".image-stage"), nativeWidth = Number(stage.dataset.width),nativeHeight=Number(stage.dataset.height),style=getComputedStyle(canvas);
-    const availableWidth=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight),availableHeight=canvas.clientHeight-parseFloat(style.paddingTop)-parseFloat(style.paddingBottom);
-    const scale = fit ? Math.max(.05,Math.min(1,availableWidth/nativeWidth,availableHeight/nativeHeight)) : zoom;
+    const availableWidth=canvas.clientWidth-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight);
+    // Fit means fit the width: a phone capture on a wide screen grows to fill
+    // the canvas (up to 3x, past which pixels stop meaning anything), and a
+    // desktop capture on a narrow screen shrinks. Height scrolls either way.
+    const scale = fit ? Math.max(.05,Math.min(3,availableWidth/nativeWidth)) : zoom;
     stage.style.transform = "scale("+scale+")";
     stage.style.marginRight = String(nativeWidth*scale-nativeWidth)+"px";
     stage.style.marginBottom = String(nativeHeight*scale-nativeHeight)+"px";

@@ -1377,10 +1377,14 @@ describe("manifest-backed screenshot review journey", () => {
     expect(await page.locator("#zoomLabel").textContent()).toBe("Fit mode");
     expect(await page.locator("#zoomFit").getAttribute("aria-pressed")).toBe("true");
     expect(await page.locator("#zoomActual").getAttribute("aria-pressed")).toBe("false");
-    expect(Number(await narrowStage.getAttribute("data-zoom-scale"))).toBe(1);
+    // Fit fills the width: the phone capture grows on a wide screen, the desktop capture shrinks.
+    const narrowFit = Number(await narrowStage.getAttribute("data-zoom-scale"));
+    expect(narrowFit).toBeGreaterThan(1);
+    expect(narrowFit).toBeLessThanOrEqual(3);
+    expect(Math.round((await narrowStage.locator("img").boundingBox())!.width)).toBe(Math.round(390 * narrowFit));
     expect(Number(await wideStage.getAttribute("data-zoom-scale"))).toBeLessThan(1);
     expect(await narrow.locator(".canvas").getAttribute("aria-label")).toContain(
-      "Fit to view at 100%",
+      `Fit to view at ${Math.round(narrowFit * 100)}%`,
     );
 
     await page.locator("#zoomActual").click();
