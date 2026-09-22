@@ -57,10 +57,14 @@ pnpm run lint
 
 ## Releasing
 
+Bump, tag `vX.Y.Z`, push. Pushing the tag is the whole release; nothing is published by hand.
+
 `version.json` is the single source of truth. `pnpm version:sync` copies it into every package manifest and the generated contract constant; `pnpm run build` refuses to proceed if they drift.
 
-1. Bump `version.json`, run `pnpm version:sync`, update `CHANGELOG.md`, and commit.
-2. Tag `vX.Y.Z` and push the tag.
-3. The `Release` workflow verifies the tag matches `version.json`, builds and tests the tarball, publishes `viewport-qa` to npm with provenance, and creates a GitHub release with the tarball attached.
+1. Bump `version.json`, run `pnpm version:sync`, add a `## X.Y.Z — date` section to `CHANGELOG.md`, and merge that through a pull request.
+2. On the merged `main`: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+3. The `Release` workflow checks the tag matches `version.json`, builds and tests the tarball, publishes `viewport-qa` to npm with provenance, and creates the GitHub release with that version's `CHANGELOG.md` section as its notes and the tarball attached.
 
-Publishing uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC, no long-lived token): the package on npmjs.com must have this repository's `release.yml` workflow configured as a trusted publisher.
+Only `viewport-qa` is published; the `@vqa/*` workspaces are private and bundled into it.
+
+Publishing uses [npm trusted publishing](https://docs.npmjs.com/trusted-publishers) (OIDC): there is no npm token in this repository. npm accepts a publish only from this repository's `release.yml` workflow, as configured on npmjs.com for `viewport-qa` (`npm trust list viewport-qa`). Renaming or moving the workflow file breaks publishing until that configuration is updated to match.

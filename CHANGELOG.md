@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — 2026-09-20
+## 0.5.0 — 2026-09-22
 
 First public release, published to npm as `viewport-qa`.
 
